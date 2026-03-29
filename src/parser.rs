@@ -294,6 +294,14 @@ impl<'src> Parser<'src> {
                     body: Box::new(body),
                 }
             }
+            Kind::Continue => {
+                self.expect(Kind::Continue);
+                Stmt::Continue
+            }
+            Kind::Break => {
+                self.expect(Kind::Break);
+                Stmt::Break
+            }
             Kind::If => {
                 self.expect(Kind::If);
                 let cond = self.parse_expr(0.0);
