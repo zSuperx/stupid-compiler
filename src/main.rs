@@ -1,8 +1,9 @@
 #![allow(unused)]
-use crate::{parser::parse_program, tokenize::Lexer};
 
-mod parser;
+use crate::tokenize::Lexer;
+
 mod tokenize;
+mod parser;
 mod types;
 
 fn main() {
@@ -14,11 +15,11 @@ fn main() {
     }
 
     let file = &args[1];
+    let content = std::fs::read(file).unwrap();
 
-    let toks = Lexer::new(file).tokenize();
-    for tok in toks.iter() {
-        println!("{:?}", tok.kind);
+    let mut lexer = Lexer::new(&content);
+
+    for token in lexer {
+        println!("{}", token.kind);
     }
-
-    parse_program(tok);
 }
