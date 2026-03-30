@@ -1,10 +1,11 @@
 #![allow(unused)]
 
-use crate::tokenize::Lexer;
+use crate::tokenizer::Lexer;
 
-mod tokenize;
+mod tokenizer;
 mod parser;
 mod types;
+mod resolver;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

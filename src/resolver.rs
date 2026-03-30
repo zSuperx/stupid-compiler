@@ -195,7 +195,13 @@ impl<'src> Resolver<'src> {
                 let args = args
                     .iter()
                     .zip(expected_args.iter())
-                    .map(|(a, e)| self.resolve_expr(a, Some(e)))
+                    .map(|(a, e)| {
+                        let r = self.resolve_expr(a, Some(e));
+                        if r.ty != *e {
+                            panic!("Mismatched types. Expected {:?} but got {:?}", e, r.ty);
+                        }
+                        r
+                    })
                     .collect();
                 Expr {
                     ty: *returns.clone(),
@@ -455,12 +461,8 @@ mod tests {
     #[test]
     fn test_resolve() {
         let src = br#"
-fn main() -> u8 {
-    let x = main();
-}
-
-fn main() {
-    let x = 4;
+fn main(argc: u8, argv: **u8) {
+    main(argc, & &argc);
 }
 "#;
         println!("Source code:\n{}\n", str::from_utf8(src).unwrap());

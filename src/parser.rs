@@ -1,6 +1,3 @@
-use core::panic;
-use std::collections::VecDeque;
-
 use crate::types::*;
 
 pub struct Parser<'src> {
@@ -13,7 +10,7 @@ impl<'src> Parser<'src> {
     }
 
     fn is_next(&self, kind: Kind<'src>) -> bool {
-        self.peek().clone() == kind
+        self.peek() == kind
     }
 
     fn expect(&mut self, kind: Kind<'src>) {
@@ -48,50 +45,56 @@ impl<'src> Parser<'src> {
     }
 
     fn consume(&mut self) -> Kind<'src> {
-        let first = self.src.first().unwrap_or(&Kind::EOF);
+        let first = self.src.first().unwrap_or(&Kind::Eof);
         if !self.src.is_empty() {
             self.src = &self.src[1..];
         }
-        first.clone()
+        *first
     }
 
     fn peek(&self) -> Kind<'src> {
-        self.src.first().unwrap_or(&Kind::EOF).clone()
+        *self.src.first().unwrap_or(&Kind::Eof)
     }
 
-    fn parse_program(&mut self) -> Vec<Object<'src>> {
+    pub fn parse_program(&mut self) -> Vec<Object<'src, RawType<'src>>> {
         let mut objs = vec![];
-        while !self.is_next(Kind::EOF) {
+        while !self.is_next(Kind::Eof) {
             match self.peek() {
                 Kind::Fn => objs.push(self.parse_fn()),
+                Kind::Struct => objs.push(self.parse_struct()),
+                Kind::Global => objs.push(self.parse_global()),
                 x => panic!("Expected function definition, found {x}"),
             }
         }
         objs
     }
 
-    // This parses the following phrase:
-    // VARNAME ":" TYPE
-    fn parse_variable(&mut self) -> Variable<'src> {
-        let Kind::Ident(name) = self.consume() else {
-            panic!("Expected identifier");
-        };
-        self.expect(Kind::Colon);
-        let ty = self.parse_type();
-        Variable {
-            name: name.to_string(),
-            ty,
-        }
+    fn parse_struct(&mut self) -> Object<'src, RawType<'src>> {
+        todo!()
     }
 
-    fn parse_fn(&mut self) -> Object<'src> {
+    fn parse_global(&mut self) -> Object<'src, RawType<'src>> {
+        self.expect(Kind::Global);
+        let name = self.expect_ident();
+        self.expect(Kind::Colon);
+        let ty = self.parse_type();
+        self.expect(Kind::Eq);
+        let rhs = self.parse_expr();
+        Object::Global(Symbol { name, ty })
+    }
+
+    fn parse_fn(&mut self) -> Object<'src, RawType<'src>> {
         self.expect(Kind::Fn);
         let name = self.expect_ident();
         self.expect(Kind::LParen);
 
         let mut args = vec![];
         if !self.is_next(Kind::RParen) {
-            args.push(self.parse_variable());
+            let name = self.expect_ident();
+            self.expect(Kind::Colon);
+            let ty = self.parse_type();
+            let var = Symbol { name, ty };
+            args.push(var);
         }
 
         loop {
@@ -103,45 +106,53 @@ impl<'src> Parser<'src> {
 
             self.expect(Kind::Comma);
 
-            args.push(self.parse_variable());
+            let name = self.expect_ident();
+            self.expect(Kind::Colon);
+            let ty = self.parse_type();
+            let var = Symbol { name, ty };
+            args.push(var);
         }
 
         let returns = if self.is_next(Kind::Arrow) {
             self.expect(Kind::Arrow);
-            Some(self.parse_type())
+            self.parse_type()
         } else {
-            None
+            RawType::Base("void")
         };
 
         let body = self.parse_block();
 
-        Object::FnDef {
+        Object::Fn {
             name,
-            returns,
-            args,
             body,
+            args,
+            returns,
         }
     }
 
-    fn parse_type(&mut self) -> Type<'src> {
+    fn parse_type(&mut self) -> RawType<'src> {
         let mut ty = match self.peek() {
             Kind::Star => {
                 self.consume();
-                return Type::Pointer(Box::new(self.parse_type()));
+                return RawType::Pointer(Box::new(self.parse_type()));
             }
-            Kind::Ident(name) => Type::Base(name),
+            Kind::Ident(name) => RawType::Base(name),
             x => panic!("Expected type, found {x}"),
         };
         self.consume();
         ty
     }
 
-    fn parse_prefix(&mut self) -> Expr<'src> {
+    fn parse_prefix(&mut self) -> ExprKind<'src, RawType<'src>> {
         match self.consume() {
-            Kind::Ident(s) => Expr::Ident(s),
-            Kind::Int(x) => Expr::Int(x),
-            Kind::Str(s) => Expr::Str(s),
-            op @ (Kind::Minus | Kind::Bang | Kind::And | Kind::Star) => Expr::Unary {
+            Kind::Ident(s) => ExprKind::Symbol(Symbol {
+                name: s,
+                ty: RawType::Unknown,
+            }),
+            Kind::Bool(x) => ExprKind::Bool(x),
+            Kind::Int(x) => ExprKind::Int(x),
+            Kind::Str(s) => ExprKind::Str(s),
+            op @ (Kind::Minus | Kind::Bang | Kind::And | Kind::Star) => ExprKind::Unary {
                 op: match op {
                     Kind::Minus => UnOp::Negate,
                     Kind::Bang => UnOp::Not,
@@ -149,10 +160,12 @@ impl<'src> Parser<'src> {
                     Kind::Star => UnOp::Deref,
                     _ => unreachable!(),
                 },
-                rhs: Box::new(self.parse_expr(prefix_power(op).expect("Invalid operator"))),
+                rhs: Box::new(expr(
+                    self.parse_expr_kind(prefix_power(op).expect("Invalid operator")),
+                )),
             },
             Kind::LParen => {
-                let inner = self.parse_expr(0.0);
+                let inner = self.parse_expr_kind(0.0);
                 self.expect(Kind::RParen);
                 inner
             }
@@ -160,7 +173,12 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn parse_infix(&mut self, lhs: Expr<'src>, op: Kind<'src>, op_power: f32) -> Expr<'src> {
+    fn parse_infix(
+        &mut self,
+        lhs: ExprKind<'src, RawType<'src>>,
+        op: Kind<'src>,
+        op_power: f32,
+    ) -> ExprKind<'src, RawType<'src>> {
         match op {
             Kind::LParen => {
                 let mut args = vec![];
@@ -168,11 +186,11 @@ impl<'src> Parser<'src> {
                     if !args.is_empty() {
                         self.expect(Kind::Comma);
                     }
-                    args.push(self.parse_expr(0.0));
+                    args.push(expr(self.parse_expr_kind(0.0)));
                 }
                 self.expect(Kind::RParen);
-                Expr::Call {
-                    callee: Box::new(lhs),
+                ExprKind::Call {
+                    callee: Box::new(expr(lhs)),
                     args,
                 }
             }
@@ -189,7 +207,7 @@ impl<'src> Parser<'src> {
             | Kind::LtEq
             | Kind::Gt
             | Kind::GtEq) => {
-                let rhs = self.parse_expr(op_power);
+                let rhs = self.parse_expr_kind(op_power);
                 let binop = match op {
                     Kind::Eq => BinOp::Assign,
                     Kind::Plus => BinOp::Add,
@@ -206,37 +224,36 @@ impl<'src> Parser<'src> {
                     Kind::GtEq => BinOp::Ge,
                     _ => unreachable!(),
                 };
-                Expr::Bin {
+                ExprKind::Bin {
                     op: binop,
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(rhs),
+                    lhs: Box::new(expr(lhs)),
+                    rhs: Box::new(expr(rhs)),
                 }
             }
             Kind::LBrack => {
-                let index = self.parse_expr(op_power);
+                let index = self.parse_expr_kind(op_power);
                 self.expect(Kind::RBrack);
-                Expr::Bin {
-                    op: BinOp::Index,
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(index),
+                ExprKind::Index {
+                    lhs: Box::new(expr(lhs)),
+                    rhs: Box::new(expr(index)),
                 }
             }
             Kind::Dot => {
-                let field = self.parse_expr(op_power);
-                if !matches!(field, Expr::Ident(_)) {
+                let field = self.parse_expr_kind(op_power);
+                if !matches!(field, ExprKind::Symbol(_)) {
                     panic!("Fields can only be accessed with an identifier, not a {field:?}");
                 }
-                Expr::Bin {
-                    op: BinOp::FieldAccess,
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(field),
+                ExprKind::FieldAccess {
+                    lhs: Box::new(expr(lhs)),
+                    rhs: Box::new(expr(field)),
                 }
             }
             x => panic!("Expected infix operator, found {x}"),
         }
     }
 
-    fn parse_expr(&mut self, min_power: f32) -> Expr<'src> {
+    // Pratt parsing!
+    fn parse_expr_kind(&mut self, min_power: f32) -> ExprKind<'src, RawType<'src>> {
         let mut lhs = self.parse_prefix();
 
         loop {
@@ -258,7 +275,14 @@ impl<'src> Parser<'src> {
         lhs
     }
 
-    fn parse_block(&mut self) -> Stmt<'src> {
+    fn parse_expr(&mut self) -> Expr<'src, RawType<'src>> {
+        Expr {
+            kind: self.parse_expr_kind(0.0),
+            ty: RawType::Unknown,
+        }
+    }
+
+    fn parse_block(&mut self) -> Stmt<'src, RawType<'src>> {
         self.expect(Kind::LCurly);
         let mut stmts = vec![];
         while !self.is_next(Kind::RCurly) {
@@ -273,22 +297,27 @@ impl<'src> Parser<'src> {
         Stmt::Block(stmts)
     }
 
-    fn parse_stmt(&mut self) -> Stmt<'src> {
-        let stmt = match self.peek() {
+    fn parse_stmt(&mut self) -> Stmt<'src, RawType<'src>> {
+        match self.peek() {
             Kind::Let => {
+                let mut ty = RawType::Unknown;
                 self.expect(Kind::Let);
-                let lhs = self.parse_variable();
-
+                let name = self.expect_ident();
+                if self.is_next(Kind::Colon) {
+                    self.expect(Kind::Colon);
+                    ty = self.parse_type();
+                }
+                let lhs = Symbol { name, ty };
                 self.expect(Kind::Eq);
 
-                let rhs = self.parse_expr(0.0);
+                let rhs = self.parse_expr();
                 self.expect(Kind::Semi);
                 Stmt::Let { lhs, rhs }
             }
             Kind::While => {
                 self.expect(Kind::While);
-                let cond = self.parse_expr(0.0);
-                let body = self.parse_stmt();
+                let cond = self.parse_expr();
+                let body = self.parse_block();
                 Stmt::While {
                     cond,
                     body: Box::new(body),
@@ -304,7 +333,7 @@ impl<'src> Parser<'src> {
             }
             Kind::If => {
                 self.expect(Kind::If);
-                let cond = self.parse_expr(0.0);
+                let cond = self.parse_expr();
                 let then_ = self.parse_block();
 
                 let else_ = if self.is_next(Kind::Else) {
@@ -328,21 +357,20 @@ impl<'src> Parser<'src> {
             Kind::Return => {
                 self.expect(Kind::Return);
                 let retval = if !self.is_next(Kind::Semi) {
-                    Some(self.parse_expr(0.0))
+                    self.parse_expr()
                 } else {
-                    None
+                    expr(ExprKind::Nothing)
                 };
                 self.expect(Kind::Semi);
 
                 Stmt::Return(retval)
             }
             _ => {
-                let expr = self.parse_expr(0.0);
+                let expr = self.parse_expr();
                 self.expect(Kind::Semi);
                 Stmt::Expr(expr)
             }
-        };
-        stmt
+        }
     }
 }
 
@@ -383,7 +411,7 @@ fn infix_power(kind: Kind) -> Option<(f32, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{tokenize::Lexer, types::*};
+    use crate::{tokenizer::Lexer, types::*};
     #[test]
     fn test_parse_type() {
         let src = b"u32 *billy";
@@ -399,7 +427,7 @@ mod tests {
         println!("input = {}", str::from_utf8(input).unwrap());
         let tokens: Vec<Kind> = Lexer::new(input).map(|t| t.kind).collect();
         let mut parser = Parser::new(&tokens);
-        let output = parser.parse_expr(0.0);
+        let output = parser.parse_expr();
         dbg!(output);
     }
 
@@ -409,7 +437,7 @@ mod tests {
         println!("input = {}", str::from_utf8(input).unwrap());
         let tokens: Vec<Kind> = Lexer::new(input).map(|t| t.kind).collect();
         let mut parser = Parser::new(&tokens);
-        let output = parser.parse_expr(0.0);
+        let output = parser.parse_expr();
         dbg!(output);
     }
 
@@ -417,7 +445,7 @@ mod tests {
     fn test_parse_fn() {
         let src = br#"
 fn bob(arg1: *u32, arg2: u8) -> u32 {
-    42.foo();
+    foo.bar();
 }
 "#;
         let tokens: Vec<Kind> = Lexer::new(src).map(|t| t.kind).collect();
@@ -433,7 +461,15 @@ fn bob(arg1: *u32, arg2: u8) -> u32 {
         let tokens: Vec<Kind> = Lexer::new(&src).map(|t| t.kind).collect();
         let mut parser = Parser::new(&tokens);
         let parsed = parser.parse_program();
-        println!("Source code: {}", str::from_utf8(&src).unwrap());
+        println!("Source code:\n{}", str::from_utf8(&src).unwrap());
         dbg!(parsed);
+    }
+}
+
+/// Helper to assign an unknown type to an ExprKind
+fn expr<'src>(kind: ExprKind<'src, RawType<'src>>) -> Expr<'src, RawType<'src>> {
+    Expr {
+        kind,
+        ty: RawType::Unknown,
     }
 }

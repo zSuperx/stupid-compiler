@@ -172,7 +172,7 @@ impl<'src> Lexer<'src> {
             b"/" => Slash,   // /
             b"%" => Percent, // %
             b"&" => And,     // &
-            b"|" => Or,     // |
+            b"|" => Or,      // |
             b"^" => Caret,   // ^
             b"!" => Bang,    // !
             b"=" => Eq,      // =

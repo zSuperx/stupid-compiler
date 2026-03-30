@@ -20,14 +20,17 @@ impl<'src> std::fmt::Display for Kind<'src> {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Kind<'src> {
-    EOF,
+    Eof,
     Int(u64),
+    Bool(bool),
     Str(&'src [u8]),
     Ident(&'src str),
 
     // Declarator keywords
     Let,
     Fn,
+    Struct,
+    Global,
 
     // Control flow keywords
     While,
@@ -59,12 +62,12 @@ pub enum Kind<'src> {
     Slash,   // /
     Percent, // %
     And,     // &
-    Or,     // |
+    Or,      // |
     Caret,   // ^
     Bang,    // !
     Eq,      // =
     AndAnd,  // &&
-    OrOr,  // ||
+    OrOr,    // ||
 
     // Relationals
     EqEq,   // ==
@@ -79,73 +82,110 @@ pub enum Kind<'src> {
 /// - function definitions
 /// - type definitions
 /// - global variables
-#[derive(Debug)]
-pub enum Object<'src> {
-    FnDef {
+#[derive(Debug, Clone)]
+pub enum Object<'src, T> {
+    Fn {
         name: &'src str,
-        returns: Option<Type<'src>>,
-        args: Vec<Variable<'src>>,
-        body: Stmt<'src>,
+        returns: T,
+        args: Vec<Symbol<'src, T>>,
+        body: Stmt<'src, T>,
     },
-    // I'll add the others later...
+    Global(Symbol<'src, T>),
+    Struct {
+        name: &'src str,
+        fields: Vec<Symbol<'src, T>>,
+    },
 }
 
-#[derive(Debug)]
-pub enum Type<'src> {
+#[derive(Debug, Clone)]
+pub enum RawType<'src> {
+    Unknown,
     Base(&'src str),
-    Pointer(Box<Type<'src>>),
+    Pointer(Box<RawType<'src>>),
 }
 
-#[derive(Debug)]
-pub struct Variable<'src> {
-    pub name: String,
-    pub ty: Type<'src>,
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedType {
+    U8,
+    U16,
+    U32,
+    U64,
+    I8,
+    I16,
+    I32,
+    I64,
+    Bool,
+    Void,
+
+    Function {
+        args: Vec<ResolvedType>,
+        returns: Box<ResolvedType>,
+    },
+    Pointer(Box<ResolvedType>),
+    // Struct(&'src str, Vec<Field>),
 }
 
-#[derive(Debug)]
-pub enum Stmt<'src> {
+#[derive(Debug, Clone, Copy)]
+pub struct Symbol<'src, T> {
+    pub name: &'src str,
+    pub ty: T,
+}
+
+#[derive(Debug, Clone)]
+pub enum Stmt<'src, T> {
     Let {
-        lhs: Variable<'src>,
-        rhs: Expr<'src>,
+        lhs: Symbol<'src, T>,
+        rhs: Expr<'src, T>,
     },
     While {
-        cond: Expr<'src>,
-        body: Box<Stmt<'src>>,
+        cond: Expr<'src, T>,
+        body: Box<Stmt<'src, T>>,
     },
     Continue,
     Break,
     If {
-        cond: Expr<'src>,
-        then_: Box<Stmt<'src>>,
-        else_: Box<Stmt<'src>>,
+        cond: Expr<'src, T>,
+        then_: Box<Stmt<'src, T>>,
+        else_: Box<Stmt<'src, T>>,
     },
-    Return(Option<Expr<'src>>),
-    Block(Vec<Stmt<'src>>),
-    Assign {
-        lhs: Expr<'src>,
-        rhs: Expr<'src>,
-    },
-    Expr(Expr<'src>),
+    Return(Expr<'src, T>),
+    Block(Vec<Stmt<'src, T>>),
+    Expr(Expr<'src, T>),
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr<'src> {
-    Ident(&'src str),
+pub struct Expr<'src, T> {
+    pub kind: ExprKind<'src, T>,
+    pub ty: T,
+}
+
+#[derive(Debug, Clone)]
+pub enum ExprKind<'src, T> {
+    Symbol(Symbol<'src, T>),
     Int(u64),
     Bool(bool),
+    Nothing,
     Str(&'src [u8]),
     Call {
-        callee: Box<Expr<'src>>,
-        args: Vec<Expr<'src>>,
+        callee: Box<Expr<'src, T>>,
+        args: Vec<Expr<'src, T>>,
     },
     Unary {
         op: UnOp,
-        rhs: Box<Expr<'src>>,
+        rhs: Box<Expr<'src, T>>,
     },
     Bin {
         op: BinOp,
-        lhs: Box<Expr<'src>>,
-        rhs: Box<Expr<'src>>,
+        lhs: Box<Expr<'src, T>>,
+        rhs: Box<Expr<'src, T>>,
+    },
+    FieldAccess {
+        lhs: Box<Expr<'src, T>>,
+        rhs: Box<Expr<'src, T>>,
+    },
+    Index {
+        lhs: Box<Expr<'src, T>>,
+        rhs: Box<Expr<'src, T>>,
     },
 }
 
@@ -164,8 +204,6 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
-    FieldAccess,
-    Index,
     LogOr,
     LogAnd,
     Gt,
