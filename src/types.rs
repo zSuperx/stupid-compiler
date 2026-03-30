@@ -1,25 +1,25 @@
 #[derive(Debug, Clone)]
 pub struct Token<'src> {
-    pub kind: Kind<'src>,
+    pub kind: TKind<'src>,
     pub length: usize,
 }
 
-impl<'src> std::fmt::Display for Kind<'src> {
+impl<'src> std::fmt::Display for TKind<'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Kind::Int(x) => f.write_fmt(format_args!("Int literal {}", x)),
-            Kind::Str(x) => f.write_fmt(format_args!(
+            TKind::Int(x) => f.write_fmt(format_args!("Int literal {}", x)),
+            TKind::Str(x) => f.write_fmt(format_args!(
                 "String literal \"{}\"",
                 str::from_utf8(x).unwrap()
             )),
-            Kind::Ident(x) => f.write_fmt(format_args!("Identifer \"{}\"", x)),
+            TKind::Ident(x) => f.write_fmt(format_args!("Identifer \"{}\"", x)),
             x => f.write_fmt(format_args!("{:?}", x)),
         }
     }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum Kind<'src> {
+pub enum TKind<'src> {
     Eof,
     Int(u64),
     Bool(bool),
@@ -155,12 +155,12 @@ pub enum Stmt<'src, T> {
 
 #[derive(Debug, Clone)]
 pub struct Expr<'src, T> {
-    pub kind: ExprKind<'src, T>,
+    pub kind: EKind<'src, T>,
     pub ty: T,
 }
 
 #[derive(Debug, Clone)]
-pub enum ExprKind<'src, T> {
+pub enum EKind<'src, T> {
     Symbol(Symbol<'src, T>),
     Int(u64),
     Bool(bool),
@@ -213,3 +213,4 @@ pub enum BinOp {
     Eq,
     Ne,
 }
+

@@ -32,7 +32,7 @@ impl<'src> Lexer<'src> {
         let kind = str::from_utf8(&buf)
             .map(|s| s.parse().expect("LEXER: Integer literal too large"))
             .ok()
-            .map(Kind::Int)?;
+            .map(TKind::Int)?;
 
         // How far did we traverse to complete this token?
         let length = cursor;
@@ -61,19 +61,19 @@ impl<'src> Lexer<'src> {
             .expect("LEXER: Non-utf8 characters are not supported");
 
         let kind = match s {
-            "let" => Kind::Let,
-            "fn" => Kind::Fn,
-            "struct" => Kind::Struct,
-            "global" => Kind::Global,
-            "while" => Kind::While,
-            "continue" => Kind::Continue,
-            "break" => Kind::Break,
-            "if" => Kind::If,
-            "else" => Kind::Else,
-            "return" => Kind::Return,
-            "true" => Kind::Bool(true),
-            "false" => Kind::Bool(false),
-            _ => Kind::Ident(s),
+            "let" => TKind::Let,
+            "fn" => TKind::Fn,
+            "struct" => TKind::Struct,
+            "global" => TKind::Global,
+            "while" => TKind::While,
+            "continue" => TKind::Continue,
+            "break" => TKind::Break,
+            "if" => TKind::If,
+            "else" => TKind::Else,
+            "return" => TKind::Return,
+            "true" => TKind::Bool(true),
+            "false" => TKind::Bool(false),
+            _ => TKind::Ident(s),
         };
 
         // How far did we traverse to complete this token?
@@ -121,7 +121,7 @@ impl<'src> Lexer<'src> {
         }
 
         // +1/-1 to disclude the surrounding "..."
-        let kind = Kind::Str(self.src.get(0..cursor)?);
+        let kind = TKind::Str(self.src.get(0..cursor)?);
         let length = cursor;
         self.src = &self.src[cursor..];
         Some(Token { length, kind })
@@ -150,7 +150,7 @@ impl<'src> Lexer<'src> {
             length = 1;
         }
 
-        use Kind::*;
+        use TKind::*;
         let kind = match src.get(0..length)? {
             // Delimiters
             b"(" => LParen,
@@ -207,7 +207,7 @@ impl<'src> Iterator for Lexer<'src> {
 
 #[cfg(test)]
 mod tests {
-    use crate::tokenizer::{Lexer, Token};
+    use super::{Lexer, Token};
 
     #[test]
     fn test_read_num() {
