@@ -3,64 +3,58 @@ use std::{collections::HashMap, ops::DerefMut};
 use crate::types::*;
 
 pub struct Codegen<'src> {
-    vr: usize,
+    vr_count: VReg,
+    if_label: usize,
+    loop_label: usize,
     program: String,
-    symbols: HashMap<&'src str, usize>,
-    label_count: usize,
+    symbols: HashMap<&'src str, VReg>,
 }
 
-#[derive(Debug)]
-pub struct IRNode {
-    inputs: Vec<usize>, // input virtual registers
-    output: usize,      // output virtual register
-}
+type VReg = usize;
 
 impl<'src> Codegen<'src> {
     pub fn new() -> Self {
         Self {
-            vr: 0,
-            label_count: 0,
+            vr_count: 0,
+            if_label: 0,
+            loop_label: 0,
             program: String::new(),
             symbols: HashMap::new(),
         }
     }
 
-    fn emit_merged_node(
-        &mut self,
-        nodes: Vec<IRNode>,
-        next_program: String,
-        target: usize,
-    ) -> IRNode {
-        let mut inputs = vec![];
-        for mut node in nodes {
-            inputs.append(&mut node.inputs);
-        }
+    fn emit_raw(&mut self, next_program: &str) {
         if !next_program.is_empty() {
             self.program.push_str("\t");
-            self.program.push_str(&next_program);
+            self.program.push_str(next_program);
             self.program.push_str("\n");
         }
-        IRNode {
-            inputs,
-            output: target,
+    }
+
+    fn emit_label(&mut self, label: &str) {
+        if !label.is_empty() {
+            self.program.push_str(label);
+            self.program.push_str(":\n");
         }
     }
 
-    fn emit_label(&mut self, name: Option<&str>) -> String {
-        let label = match name {
-            Some(name) => format!("F{name}:\n"),
-            None => {
-                self.label_count += 1;
-                format!("L{}:\n", self.label_count - 1)
+    fn next_label(&mut self, stmt: &Stmt<'src, ResolvedType>) -> String {
+        match stmt {
+            Stmt::While { .. } => {
+                self.loop_label += 1;
+                format!("L{}", self.loop_label)
             }
-        };
-        self.program.push_str(&label);
-        label
+            Stmt::If { .. } => {
+                self.if_label += 1;
+                format!("I{}", self.if_label)
+            }
+            _ => unreachable!(),
+        }
     }
 
-    fn next_vr(&mut self) -> usize {
-        self.vr += 1;
-        self.vr - 1
+    fn next_vr(&mut self) -> VReg {
+        self.vr_count += 1;
+        self.vr_count
     }
 
     pub fn generate(mut self, objs: &[Object<'src, ResolvedType>]) -> String {
@@ -78,11 +72,14 @@ impl<'src> Codegen<'src> {
                 args,
                 body,
             } => {
-                self.emit_label(Some(name));
+                let label = format!("Fn_{name}");
+                self.emit_label(&label);
                 self.symbols.clear();
-                for arg in args {
-                    let vr = self.next_vr();
-                    self.symbols.insert(arg.name, vr);
+                self.vr_count = 0;
+                for (i, arg) in args.iter().enumerate() {
+                    let target = self.next_vr();
+                    self.emit_raw(&format!("%{target} = arg({i})"));
+                    self.symbols.insert(arg.name, target);
                 }
                 self.emit_stmt(body);
             }
@@ -99,14 +96,49 @@ impl<'src> Codegen<'src> {
                     panic!("Duplicate symbol {:?}", lhs);
                 }
                 let rhs = self.emit_expr(rhs);
-                let program = format!("%{target} = %{}", rhs.output);
-                self.emit_merged_node(vec![rhs], program, target);
+                let program = format!("%{target} = %{}", rhs);
+                self.emit_raw(&program);
             }
-            Stmt::While { cond, body } => todo!(),
-            Stmt::Continue => todo!(),
-            Stmt::Break => todo!(),
-            Stmt::If { cond, then_, else_ } => todo!(),
-            Stmt::Return(expr) => todo!(),
+            Stmt::While { cond, body } => {
+                let label = self.next_label(stmt);
+                let start_label = label.clone() + "_loop";
+                let end_label = label + "_end";
+                let cond = self.emit_expr(cond);
+                let target = self.next_vr();
+                self.emit_raw(&format!("%{target} = int(0)"));
+                self.emit_raw(&format!("bne %{target}, %{cond}, {end_label}"));
+                self.emit_label(&start_label);
+                self.emit_stmt(body);
+                self.emit_raw(&format!("br {start_label}"));
+                self.emit_label(&end_label);
+            }
+            // Find the current loop label
+            Stmt::Continue => {
+                // Jump to start label
+                self.emit_raw(&format!("br L{}_loop", self.if_label));
+            }
+            Stmt::Break => {
+                // Jump to end label
+                self.emit_raw(&format!("br L{}_endloop", self.if_label));
+            }
+            Stmt::If { cond, then_, else_ } => {
+                let cond = self.emit_expr(cond);
+                let label = self.next_label(stmt);
+                let else_label = label.clone() + "_else";
+                let end_label = label + "_end";
+                let target = self.next_vr();
+                self.emit_raw(&format!("%{target} = int(0)"));
+                self.emit_raw(&format!("beq %{target}, %{cond}, {else_label}"));
+                self.emit_stmt(then_);
+                self.emit_raw(&format!("br {end_label}"));
+                self.emit_label(&else_label);
+                self.emit_stmt(else_);
+                self.emit_label(&end_label);
+            }
+            Stmt::Return(expr) => {
+                let ret = self.emit_expr(expr);
+                self.emit_raw(&format!("ret %{ret}"));
+            }
             Stmt::Block(stmts) => {
                 for stmt in stmts {
                     self.emit_stmt(stmt);
@@ -116,83 +148,115 @@ impl<'src> Codegen<'src> {
         }
     }
 
-    fn emit_expr(&mut self, Expr { kind, ty }: &Expr<'src, ResolvedType>) -> IRNode {
+    fn emit_expr(&mut self, Expr { kind, ty }: &Expr<'src, ResolvedType>) -> VReg {
         let target;
-        let (template, nodes) = match kind {
+        let template = match kind {
             EKind::Symbol(symbol) => {
                 target = *self.symbols.get(symbol.name).unwrap();
-                (format!(""), vec![])
+                format!("")
             }
             EKind::Int(x) => {
                 target = self.next_vr();
-                (format!("%{target} = int({x})"), vec![])
+                format!("%{target} = int({x})")
             }
             EKind::Bool(x) => {
                 target = self.next_vr();
-                (format!("%{target} = bool({x})"), vec![])
+                format!("%{target} = int({})", *x as u8)
             }
-            EKind::Nothing => panic!("Can't emit nothing!"),
+            EKind::Nothing => {
+                target = self.next_vr();
+                format!("%{target} = int(0)")
+            }
             EKind::Str(items) => todo!(),
             EKind::Call { callee, args } => {
                 target = self.next_vr();
                 let mut nodes: Vec<_> = args.iter().map(|arg| self.emit_expr(arg)).collect();
                 let call_instr = match &callee.kind {
                     EKind::Symbol(symbol) => {
-                        format!("%{target} = call F{}, {}", symbol.name, args.len())
+                        format!("%{target} = call _{}, {}", symbol.name, args.len())
                     }
                     _ => {
                         let callee = self.emit_expr(callee);
-                        let program =
-                            format!("%{target} = icall %{}, {}", callee.output, args.len());
+                        let program = format!("%{target} = icall %{}, {}", callee, args.len());
                         nodes.push(callee);
                         program
                     }
                 };
                 let program = nodes
                     .iter()
-                    .map(|param| format!("param %{}\n\t", param.output))
+                    .map(|param| format!("param %{}\n\t", param))
                     .collect::<Vec<_>>()
                     .join("")
                     + &call_instr;
-                (program, vec![])
+                program
             }
-            EKind::Unary { op, rhs } => todo!(),
-            EKind::Bin { op, lhs, rhs } => {
-                let mut lhs = self.emit_expr(lhs);
-                let mut rhs = self.emit_expr(rhs);
-                match op {
-                    BinOp::Assign => {
-                        target = lhs.output;
-                        (format!("%{target} = %{}", rhs.output), vec![lhs, rhs])
-                    }
-                    op => {
-                        let op_str = match op {
-                            BinOp::Add => "add",
-                            BinOp::Sub => "sub",
-                            BinOp::Mul => "mul",
-                            BinOp::Div => "div",
-                            BinOp::LogOr => "or",
-                            BinOp::LogAnd => "and",
-                            BinOp::Gt => "gt",
-                            BinOp::Ge => "ge",
-                            BinOp::Lt => "lt",
-                            BinOp::Le => "le",
-                            BinOp::Eq => "eq",
-                            BinOp::Ne => "ne",
-                            _ => unreachable!(),
-                        };
-                        target = self.next_vr();
-                        (
-                            format!("%{target} = {op_str} %{}, %{}", lhs.output, rhs.output),
-                            vec![lhs, rhs],
-                        )
+            EKind::Unary { op, rhs } => match op {
+                UnOp::Negate => {
+                    let rhs = self.emit_expr(rhs);
+                    target = self.next_vr();
+                    format!("%{target} = neg %{rhs}")
+                }
+                UnOp::Not => {
+                    let rhs = self.emit_expr(rhs);
+                    target = self.next_vr();
+                    format!("%{target} = xor %{rhs}, 1")
+                }
+                UnOp::Deref => {
+                    let rhs = self.emit_expr(rhs);
+                    target = self.next_vr();
+                    format!("%{target} = load %{rhs}")
+                }
+                UnOp::AddrOf => {
+                    target = self.next_vr();
+                    match &rhs.kind {
+                        EKind::Symbol(symbol) => format!("%{target} = lea(\"{}\")", symbol.name),
+                        x => panic!("Haven't done {x:?}"),
                     }
                 }
-            }
+            },
+            EKind::Bin { op, lhs, rhs } => match op {
+                BinOp::Assign => match &lhs.kind {
+                    EKind::Unary {
+                        op: UnOp::Deref,
+                        rhs: lrhs, // Left right hand side (deref's inner)
+                    } => {
+                        target = self.emit_expr(lrhs); // This will be derived from AddrOf
+                        let rhs = self.emit_expr(rhs);
+                        format!("store %{target}, %{rhs}")
+                    }
+                    _ => {
+                        target = self.emit_expr(lhs);
+                        let rhs = self.emit_expr(rhs);
+                        format!("%{target} = %{}", rhs)
+                    }
+                },
+                op => {
+                    let lhs = self.emit_expr(lhs);
+                    let rhs = self.emit_expr(rhs);
+                    let op_str = match op {
+                        BinOp::Add => "add",
+                        BinOp::Sub => "sub",
+                        BinOp::Mul => "mul",
+                        BinOp::Div => "div",
+                        BinOp::LogOr => "or",
+                        BinOp::LogAnd => "and",
+                        BinOp::Gt => "gt",
+                        BinOp::Ge => "ge",
+                        BinOp::Lt => "lt",
+                        BinOp::Le => "le",
+                        BinOp::Eq => "eq",
+                        BinOp::Ne => "ne",
+                        _ => unreachable!(),
+                    };
+                    target = self.next_vr();
+                    format!("%{target} = {op_str} %{}, %{}", lhs, rhs)
+                }
+            },
             EKind::FieldAccess { lhs, rhs } => todo!(),
             EKind::Index { lhs, rhs } => todo!(),
         };
-        self.emit_merged_node(nodes, template, target)
+        self.emit_raw(&template);
+        target
     }
 }
 
@@ -204,22 +268,21 @@ mod tests {
     #[test]
     fn test_emitter() {
         let src = br#"
-fn bob(a: i32) {
-    let y = 69;
+fn main() -> void {
+    let x = 0;
+    if x == 0 {
+        return;
+    }
 }
-fn main(argc: u8, argv: **u8) {
-    let x = 5;
-    x = x + 5;
-    let y = 59;
-    bob(y);
-}
-
 "#;
         println!("Source code:\n{}\n", str::from_utf8(src).unwrap());
-        let tokens: Vec<TKind> = Lexer::new(src).map(|t| t.kind).collect();
-        let parsed = Parser::new(&tokens).parse_program();
+        let lexed: Vec<TKind> = Lexer::new(src).map(|t| t.kind).collect();
+        let parsed = Parser::new(&lexed).parse_program();
         let resolved = Resolver::new().resolve_program(&parsed);
         let program = Codegen::new().generate(&resolved);
-        let generator = println!("Program:\n{}", program);
+        // println!("Lexed:\n{:#?}", lexed);
+        // println!("Parsed:\n{:#?}", parsed);
+        // println!("Resolved:\n{:#?}", resolved);
+        println!("Program:\n{}", program);
     }
 }

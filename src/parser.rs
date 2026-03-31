@@ -325,10 +325,12 @@ impl<'src> Parser<'src> {
             }
             TKind::Continue => {
                 self.expect(TKind::Continue);
+                self.expect(TKind::Semi);
                 Stmt::Continue
             }
             TKind::Break => {
                 self.expect(TKind::Break);
+                self.expect(TKind::Semi);
                 Stmt::Break
             }
             TKind::If => {
@@ -365,7 +367,8 @@ impl<'src> Parser<'src> {
 
                 Stmt::Return(retval)
             }
-            _ => {
+            x => {
+                println!("{x:?}");
                 let expr = self.parse_expr();
                 self.expect(TKind::Semi);
                 Stmt::Expr(expr)

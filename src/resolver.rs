@@ -6,7 +6,10 @@ pub struct Resolver<'src> {
     types: HashMap<&'src str, ResolvedType>,
     scope_stack: Vec<HashMap<&'src str, Symbol<'src, ResolvedType>>>,
     return_type_stack: Vec<ResolvedType>,
+    loop_stack: usize,
 }
+
+pub type Terminates = bool;
 
 impl<'src> Resolver<'src> {
     pub fn new() -> Self {
@@ -28,6 +31,7 @@ impl<'src> Resolver<'src> {
             types,
             scope_stack: vec![HashMap::new()],
             return_type_stack: vec![],
+            loop_stack: 0,
         }
     }
 
@@ -98,7 +102,10 @@ impl<'src> Resolver<'src> {
 
                 self.return_type_stack.push(resolved_return.clone());
                 self.scope_stack.push(scope);
-                let resolved_body = self.resolve_stmt(body);
+                let (resolved_body, terminates) = self.resolve_stmt(body);
+                if !terminates && resolved_return != ResolvedType::Void {
+                    panic!("Function expects return type {:?}, but nothing was returned", resolved_return);
+                }
                 self.scope_stack.pop();
                 self.return_type_stack.pop();
                 Object::Fn {
@@ -222,7 +229,7 @@ impl<'src> Resolver<'src> {
             EKind::Unary { op, rhs } => match op {
                 UnOp::Negate => {
                     let rhs = self.resolve_expr(rhs, hint);
-                    if !is_integral(&rhs.ty) || !is_literal(&rhs) {
+                    if !is_integral(&rhs.ty) {
                         panic!("Negation (-) can only be used on literal integral types");
                     }
                     Expr {
@@ -270,7 +277,7 @@ impl<'src> Resolver<'src> {
                     Expr {
                         ty: *inner_type,
                         kind: EKind::Unary {
-                            op: UnOp::AddrOf,
+                            op: UnOp::Deref,
                             rhs: Box::new(rhs),
                         },
                     }
@@ -393,7 +400,10 @@ impl<'src> Resolver<'src> {
         }
     }
 
-    fn resolve_stmt(&mut self, stmt: &Stmt<'src, RawType<'src>>) -> Stmt<'src, ResolvedType> {
+    fn resolve_stmt(
+        &mut self,
+        stmt: &Stmt<'src, RawType<'src>>,
+    ) -> (Stmt<'src, ResolvedType>, Terminates) {
         match stmt {
             Stmt::Let { lhs, rhs } => {
                 let hint_ty = self.resolve_type(&lhs.ty);
@@ -411,30 +421,49 @@ impl<'src> Resolver<'src> {
                     .last_mut()
                     .unwrap()
                     .insert(lhs.name, sym.clone());
-                Stmt::Let { lhs: sym, rhs }
+                (Stmt::Let { lhs: sym, rhs }, false)
             }
             Stmt::While { cond, body } => {
                 let cond = self.resolve_expr(cond, None);
                 if cond.ty != ResolvedType::Bool {
                     panic!("Loop conditions must resolve to a Bool");
                 }
-                Stmt::While {
+                self.loop_stack += 1;
+                let (body, _) = self.resolve_stmt(body);
+                self.loop_stack -= 1;
+                (Stmt::While {
                     cond,
-                    body: Box::new(self.resolve_stmt(body)),
-                }
+                    body: Box::new(body),
+                }, false)
             }
-            Stmt::Continue => Stmt::Continue,
-            Stmt::Break => Stmt::Break,
+            Stmt::Continue => {
+                if self.loop_stack == 0 {
+                    panic!("'continue' statements can only be called from within loops");
+                }
+                (Stmt::Continue, true)
+            }
+            Stmt::Break => {
+                if self.loop_stack == 0 {
+                    panic!("'break' statements can only be called from within loops");
+                }
+                (Stmt::Break, true)
+            }
             Stmt::If { cond, then_, else_ } => {
                 let cond = self.resolve_expr(cond, None);
                 if cond.ty != ResolvedType::Bool {
                     panic!("If conditions must resolve to a Bool");
                 }
-                Stmt::If {
-                    cond,
-                    then_: Box::new(self.resolve_stmt(then_)),
-                    else_: Box::new(self.resolve_stmt(else_)),
-                }
+
+                let (then_, then_terminates) = self.resolve_stmt(then_);
+                let (else_, else_terminates) = self.resolve_stmt(else_);
+                (
+                    Stmt::If {
+                        cond,
+                        then_: Box::new(then_),
+                        else_: Box::new(else_),
+                    },
+                    then_terminates && else_terminates,
+                )
             }
             Stmt::Return(expr) => {
                 let expected_return_type = self.return_type_stack.last().unwrap().clone();
@@ -448,15 +477,26 @@ impl<'src> Resolver<'src> {
                         expected_return_type, expr.ty
                     );
                 }
-                Stmt::Return(expr)
+                (Stmt::Return(expr), true)
             }
             Stmt::Block(stmts) => {
                 self.scope_stack.push(HashMap::new());
-                let stmts = stmts.iter().map(|s| self.resolve_stmt(s)).collect();
+                let mut terminates = false;
+                let stmts = stmts
+                    .iter()
+                    .map(|s| {
+                        let (s, t) = self.resolve_stmt(s);
+                        if terminates {
+                            panic!("Unreachable code after {s:?}");
+                        }
+                        terminates = t;
+                        s
+                    })
+                    .collect();
                 self.scope_stack.pop();
-                Stmt::Block(stmts)
+                (Stmt::Block(stmts), terminates)
             }
-            Stmt::Expr(expr) => Stmt::Expr(self.resolve_expr(expr, None)),
+            Stmt::Expr(expr) => (Stmt::Expr(self.resolve_expr(expr, None)), false),
         }
     }
 }
