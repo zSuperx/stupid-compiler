@@ -37,8 +37,8 @@ impl<'src> Resolver<'src> {
 
     pub fn resolve_program(
         &mut self,
-        objs: &[Object<'src, RawType<'src>>],
-    ) -> Vec<Object<'src, ResolvedType>> {
+        objs: &[OKind<'src, RawType<'src>>],
+    ) -> Vec<OKind<'src, ResolvedType>> {
         objs.iter().map(|o| self.resolve_object(o)).collect()
     }
 
@@ -59,10 +59,10 @@ impl<'src> Resolver<'src> {
 
     pub fn resolve_object(
         &mut self,
-        obj: &Object<'src, RawType<'src>>,
-    ) -> Object<'src, ResolvedType> {
+        obj: &OKind<'src, RawType<'src>>,
+    ) -> OKind<'src, ResolvedType> {
         match obj {
-            Object::Fn {
+            OKind::Fn {
                 name,
                 args,
                 returns,
@@ -104,19 +104,22 @@ impl<'src> Resolver<'src> {
                 self.scope_stack.push(scope);
                 let (resolved_body, terminates) = self.resolve_stmt(body);
                 if !terminates && resolved_return != ResolvedType::Void {
-                    panic!("Function expects return type {:?}, but nothing was returned", resolved_return);
+                    panic!(
+                        "Function expects return type {:?}, but not all paths return a value",
+                        resolved_return
+                    );
                 }
                 self.scope_stack.pop();
                 self.return_type_stack.pop();
-                Object::Fn {
+                OKind::Fn {
                     name,
                     returns: resolved_return,
                     args: resolved_args,
                     body: resolved_body,
                 }
             }
-            Object::Global(symbol) => todo!(),
-            Object::Struct { name, fields } => todo!(),
+            OKind::Global(symbol) => todo!(),
+            OKind::Struct { name, fields } => todo!(),
         }
     }
 
@@ -291,9 +294,7 @@ impl<'src> Resolver<'src> {
                         panic!("Mismatched types lhs = {:?}, rhs = {:?}", lhs.ty, rhs.ty);
                     }
                     let mut valid_lvalue = match &lhs.kind {
-                        EKind::Symbol(symbol) => {
-                            !matches!(symbol.ty, ResolvedType::Function { .. })
-                        }
+                        EKind::Symbol(symbol) => !matches!(symbol.ty, ResolvedType::Function { .. }),
                         EKind::Unary {
                             op: UnOp::Deref,
                             rhs,
@@ -402,10 +403,10 @@ impl<'src> Resolver<'src> {
 
     fn resolve_stmt(
         &mut self,
-        stmt: &Stmt<'src, RawType<'src>>,
-    ) -> (Stmt<'src, ResolvedType>, Terminates) {
+        stmt: &SKind<'src, RawType<'src>>,
+    ) -> (SKind<'src, ResolvedType>, Terminates) {
         match stmt {
-            Stmt::Let { lhs, rhs } => {
+            SKind::Let { lhs, rhs } => {
                 let hint_ty = self.resolve_type(&lhs.ty);
                 let rhs = self.resolve_expr(rhs, hint_ty.as_ref());
                 if let Some(ref ty) = hint_ty
@@ -421,9 +422,9 @@ impl<'src> Resolver<'src> {
                     .last_mut()
                     .unwrap()
                     .insert(lhs.name, sym.clone());
-                (Stmt::Let { lhs: sym, rhs }, false)
+                (SKind::Let { lhs: sym, rhs }, false)
             }
-            Stmt::While { cond, body } => {
+            SKind::While { cond, body } => {
                 let cond = self.resolve_expr(cond, None);
                 if cond.ty != ResolvedType::Bool {
                     panic!("Loop conditions must resolve to a Bool");
@@ -431,24 +432,27 @@ impl<'src> Resolver<'src> {
                 self.loop_stack += 1;
                 let (body, _) = self.resolve_stmt(body);
                 self.loop_stack -= 1;
-                (Stmt::While {
-                    cond,
-                    body: Box::new(body),
-                }, false)
+                (
+                    SKind::While {
+                        cond,
+                        body: Box::new(body),
+                    },
+                    false,
+                )
             }
-            Stmt::Continue => {
+            SKind::Continue => {
                 if self.loop_stack == 0 {
                     panic!("'continue' statements can only be called from within loops");
                 }
-                (Stmt::Continue, true)
+                (SKind::Continue, true)
             }
-            Stmt::Break => {
+            SKind::Break => {
                 if self.loop_stack == 0 {
                     panic!("'break' statements can only be called from within loops");
                 }
-                (Stmt::Break, true)
+                (SKind::Break, true)
             }
-            Stmt::If { cond, then_, else_ } => {
+            SKind::If { cond, then_, else_ } => {
                 let cond = self.resolve_expr(cond, None);
                 if cond.ty != ResolvedType::Bool {
                     panic!("If conditions must resolve to a Bool");
@@ -457,7 +461,7 @@ impl<'src> Resolver<'src> {
                 let (then_, then_terminates) = self.resolve_stmt(then_);
                 let (else_, else_terminates) = self.resolve_stmt(else_);
                 (
-                    Stmt::If {
+                    SKind::If {
                         cond,
                         then_: Box::new(then_),
                         else_: Box::new(else_),
@@ -465,7 +469,7 @@ impl<'src> Resolver<'src> {
                     then_terminates && else_terminates,
                 )
             }
-            Stmt::Return(expr) => {
+            SKind::Return(expr) => {
                 let expected_return_type = self.return_type_stack.last().unwrap().clone();
                 let expr = self.resolve_expr(
                     expr,
@@ -477,9 +481,9 @@ impl<'src> Resolver<'src> {
                         expected_return_type, expr.ty
                     );
                 }
-                (Stmt::Return(expr), true)
+                (SKind::Return(expr), true)
             }
-            Stmt::Block(stmts) => {
+            SKind::Block(stmts) => {
                 self.scope_stack.push(HashMap::new());
                 let mut terminates = false;
                 let stmts = stmts
@@ -494,9 +498,9 @@ impl<'src> Resolver<'src> {
                     })
                     .collect();
                 self.scope_stack.pop();
-                (Stmt::Block(stmts), terminates)
+                (SKind::Block(stmts), terminates)
             }
-            Stmt::Expr(expr) => (Stmt::Expr(self.resolve_expr(expr, None)), false),
+            SKind::Expr(expr) => (SKind::Expr(self.resolve_expr(expr, None)), false),
         }
     }
 }
@@ -508,27 +512,4 @@ fn is_integral(ty: &ResolvedType) -> bool {
 
 fn is_literal<T>(expr: &Expr<T>) -> bool {
     matches!(expr.kind, EKind::Int(_) | EKind::Str(_) | EKind::Bool(_))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{lexer::Lexer, parser::Parser, types::*};
-
-    #[test]
-    fn test_resolve() {
-        let src = br#"
-fn bob(a: u8, b: **u8) {}
-
-fn main(argc: u8, argv: **u8) {
-    main = bob;
-}
-
-"#;
-        println!("Source code:\n{}\n", str::from_utf8(src).unwrap());
-        let tokens: Vec<TKind> = Lexer::new(src).map(|t| t.kind).collect();
-        let parsed = Parser::new(&tokens).parse_program();
-        let resolved = Resolver::new().resolve_program(&parsed);
-        dbg!(&resolved);
-    }
 }

@@ -1,7 +1,9 @@
-#[derive(Debug, Clone)]
+use std::{default, fmt::Display};
+
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Token<'src> {
     pub kind: TKind<'src>,
-    pub length: usize,
+    pub span: Span,
 }
 
 impl<'src> std::fmt::Display for TKind<'src> {
@@ -18,8 +20,9 @@ impl<'src> std::fmt::Display for TKind<'src> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
 pub enum TKind<'src> {
+    #[default]
     Eof,
     Int(u64),
     Bool(bool),
@@ -83,12 +86,12 @@ pub enum TKind<'src> {
 /// - type definitions
 /// - global variables
 #[derive(Debug, Clone)]
-pub enum Object<'src, T> {
+pub enum OKind<'src, T> {
     Fn {
         name: &'src str,
         returns: T,
         args: Vec<Symbol<'src, T>>,
-        body: Stmt<'src, T>,
+        body: SKind<'src, T>,
     },
     Global(Symbol<'src, T>),
     Struct {
@@ -132,31 +135,56 @@ pub struct Symbol<'src, T> {
 }
 
 #[derive(Debug, Clone)]
-pub enum Stmt<'src, T> {
+pub enum SKind<'src, T> {
     Let {
         lhs: Symbol<'src, T>,
         rhs: Expr<'src, T>,
     },
     While {
         cond: Expr<'src, T>,
-        body: Box<Stmt<'src, T>>,
+        body: Box<SKind<'src, T>>,
     },
     Continue,
     Break,
     If {
         cond: Expr<'src, T>,
-        then_: Box<Stmt<'src, T>>,
-        else_: Box<Stmt<'src, T>>,
+        then_: Box<SKind<'src, T>>,
+        else_: Box<SKind<'src, T>>,
     },
     Return(Expr<'src, T>),
-    Block(Vec<Stmt<'src, T>>),
+    Block(Vec<SKind<'src, T>>),
     Expr(Expr<'src, T>),
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Span(pub usize, pub usize);
+
+impl Display for Span {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}-{}", self.0, self.1))
+    }
+}
+
+impl Span {
+    pub fn merge(self, other: Self) -> Self {
+        Self(self.0.min(other.0), self.1.max(other.1))
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Expr<'src, T> {
     pub kind: EKind<'src, T>,
     pub ty: T,
+}
+
+impl<'src> Expr<'src, RawType<'src>> {
+    pub fn unknown(kind: EKind<'src, RawType<'src>>, span: Span) -> Self {
+        Self {
+            kind,
+            ty: RawType::Unknown,
+            // span,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -213,4 +241,3 @@ pub enum BinOp {
     Eq,
     Ne,
 }
-

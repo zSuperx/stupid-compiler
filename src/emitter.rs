@@ -2,7 +2,7 @@ use std::{collections::HashMap, ops::DerefMut};
 
 use crate::types::*;
 
-pub struct Codegen<'src> {
+pub struct Emitter<'src> {
     vr_count: VReg,
     if_label: usize,
     loop_label: usize,
@@ -12,7 +12,7 @@ pub struct Codegen<'src> {
 
 type VReg = usize;
 
-impl<'src> Codegen<'src> {
+impl<'src> Emitter<'src> {
     pub fn new() -> Self {
         Self {
             vr_count: 0,
@@ -38,13 +38,13 @@ impl<'src> Codegen<'src> {
         }
     }
 
-    fn next_label(&mut self, stmt: &Stmt<'src, ResolvedType>) -> String {
+    fn next_label(&mut self, stmt: &SKind<'src, ResolvedType>) -> String {
         match stmt {
-            Stmt::While { .. } => {
+            SKind::While { .. } => {
                 self.loop_label += 1;
                 format!("L{}", self.loop_label)
             }
-            Stmt::If { .. } => {
+            SKind::If { .. } => {
                 self.if_label += 1;
                 format!("I{}", self.if_label)
             }
@@ -57,16 +57,16 @@ impl<'src> Codegen<'src> {
         self.vr_count
     }
 
-    pub fn generate(mut self, objs: &[Object<'src, ResolvedType>]) -> String {
+    pub fn emit_program(mut self, objs: &[OKind<'src, ResolvedType>]) -> String {
         for obj in objs {
             self.emit_object(obj);
         }
         self.program
     }
 
-    fn emit_object(&mut self, obj: &Object<'src, ResolvedType>) {
+    fn emit_object(&mut self, obj: &OKind<'src, ResolvedType>) {
         match obj {
-            Object::Fn {
+            OKind::Fn {
                 name,
                 returns,
                 args,
@@ -83,14 +83,14 @@ impl<'src> Codegen<'src> {
                 }
                 self.emit_stmt(body);
             }
-            Object::Global(symbol) => todo!(),
-            Object::Struct { name, fields } => todo!(),
+            OKind::Global(symbol) => todo!(),
+            OKind::Struct { name, fields } => todo!(),
         }
     }
 
-    fn emit_stmt(&mut self, stmt: &Stmt<'src, ResolvedType>) {
+    fn emit_stmt(&mut self, stmt: &SKind<'src, ResolvedType>) {
         match stmt {
-            Stmt::Let { lhs, rhs } => {
+            SKind::Let { lhs, rhs } => {
                 let target = self.next_vr();
                 if self.symbols.insert(lhs.name, target).is_some() {
                     panic!("Duplicate symbol {:?}", lhs);
@@ -99,7 +99,7 @@ impl<'src> Codegen<'src> {
                 let program = format!("%{target} = %{}", rhs);
                 self.emit_raw(&program);
             }
-            Stmt::While { cond, body } => {
+            SKind::While { cond, body } => {
                 let label = self.next_label(stmt);
                 let start_label = label.clone() + "_loop";
                 let end_label = label + "_end";
@@ -113,15 +113,15 @@ impl<'src> Codegen<'src> {
                 self.emit_label(&end_label);
             }
             // Find the current loop label
-            Stmt::Continue => {
+            SKind::Continue => {
                 // Jump to start label
                 self.emit_raw(&format!("br L{}_loop", self.if_label));
             }
-            Stmt::Break => {
+            SKind::Break => {
                 // Jump to end label
                 self.emit_raw(&format!("br L{}_endloop", self.if_label));
             }
-            Stmt::If { cond, then_, else_ } => {
+            SKind::If { cond, then_, else_ } => {
                 let cond = self.emit_expr(cond);
                 let label = self.next_label(stmt);
                 let else_label = label.clone() + "_else";
@@ -130,21 +130,25 @@ impl<'src> Codegen<'src> {
                 self.emit_raw(&format!("%{target} = int(0)"));
                 self.emit_raw(&format!("beq %{target}, %{cond}, {else_label}"));
                 self.emit_stmt(then_);
-                self.emit_raw(&format!("br {end_label}"));
-                self.emit_label(&else_label);
-                self.emit_stmt(else_);
+                if let SKind::Block(v) = else_.as_ref()
+                    && !v.is_empty()
+                {
+                    self.emit_raw(&format!("br {end_label}"));
+                    self.emit_label(&else_label);
+                    self.emit_stmt(else_);
+                }
                 self.emit_label(&end_label);
             }
-            Stmt::Return(expr) => {
+            SKind::Return(expr) => {
                 let ret = self.emit_expr(expr);
                 self.emit_raw(&format!("ret %{ret}"));
             }
-            Stmt::Block(stmts) => {
+            SKind::Block(stmts) => {
                 for stmt in stmts {
                     self.emit_stmt(stmt);
                 }
             }
-            Stmt::Expr(expr) => _ = self.emit_expr(expr),
+            SKind::Expr(expr) => _ = self.emit_expr(expr),
         }
     }
 
@@ -173,7 +177,7 @@ impl<'src> Codegen<'src> {
                 let mut nodes: Vec<_> = args.iter().map(|arg| self.emit_expr(arg)).collect();
                 let call_instr = match &callee.kind {
                     EKind::Symbol(symbol) => {
-                        format!("%{target} = call _{}, {}", symbol.name, args.len())
+                        format!("%{target} = call Fn_{}, {}", symbol.name, args.len())
                     }
                     _ => {
                         let callee = self.emit_expr(callee);
@@ -279,7 +283,7 @@ fn main() -> void {
         let lexed: Vec<TKind> = Lexer::new(src).map(|t| t.kind).collect();
         let parsed = Parser::new(&lexed).parse_program();
         let resolved = Resolver::new().resolve_program(&parsed);
-        let program = Codegen::new().generate(&resolved);
+        let program = Emitter::new().emit_program(&resolved);
         // println!("Lexed:\n{:#?}", lexed);
         // println!("Parsed:\n{:#?}", parsed);
         // println!("Resolved:\n{:#?}", resolved);

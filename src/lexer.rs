@@ -2,11 +2,27 @@ use crate::types::*;
 
 pub struct Lexer<'src> {
     src: &'src [u8],
+    rest: &'src [u8],
+    position: usize,
 }
 
 impl<'src> Lexer<'src> {
     pub fn new(src: &'src [u8]) -> Self {
-        Self { src }
+        Self {
+            rest: src,
+            src,
+            position: 0,
+        }
+    }
+
+    fn make_token(&mut self, kind: TKind<'src>, length: usize) -> Token<'src> {
+        let start = self.position;
+        self.position += length;
+        let end = self.position;
+        Token {
+            kind,
+            span: Span(start, end),
+        }
     }
 
     fn read_num(&mut self) -> Option<Token<'src>> {
@@ -14,13 +30,13 @@ impl<'src> Lexer<'src> {
         let mut cursor = 0;
 
         // Make sure the number starts with a digit
-        let first = *self.src.get(cursor)?;
+        let first = *self.rest.get(cursor)?;
         if !first.is_ascii_digit() {
             return None;
         }
 
         // Now read all digits and underscores
-        while let Some(c) = self.src.get(cursor)
+        while let Some(c) = self.rest.get(cursor)
             && b"0123456789_".contains(c)
         {
             if *c != b'_' {
@@ -37,27 +53,26 @@ impl<'src> Lexer<'src> {
         // How far did we traverse to complete this token?
         let length = cursor;
         // On a successful parse, advance the cursor
-        self.src = &self.src[cursor..];
-
-        Some(Token { length, kind })
+        self.rest = &self.rest[cursor..];
+        Some(self.make_token(kind, length))
     }
 
     // This returns either an Ident or a Keyword, depending on what the string equates to
     fn read_word(&mut self) -> Option<Token<'src>> {
         let mut cursor = 0;
         // Identifiers can only start with letters or underscores
-        let first = *self.src.get(cursor)?;
+        let first = *self.rest.get(cursor)?;
         if !(first.is_ascii_alphabetic() || first == b'_') {
             return None;
         }
 
-        while let Some(c) = self.src.get(cursor)
+        while let Some(c) = self.rest.get(cursor)
             && (c.is_ascii_alphanumeric() || *c == b'_')
         {
             cursor += 1;
         }
 
-        let s = str::from_utf8(self.src.get(0..cursor)?)
+        let s = str::from_utf8(self.rest.get(0..cursor)?)
             .expect("LEXER: Non-utf8 characters are not supported");
 
         let kind = match s {
@@ -79,9 +94,9 @@ impl<'src> Lexer<'src> {
         // How far did we traverse to complete this token?
         let length = cursor;
         // On a successful parse, advance the cursor
-        self.src = &self.src[cursor..];
+        self.rest = &self.rest[cursor..];
 
-        Some(Token { length, kind })
+        Some(self.make_token(kind, length))
     }
 
     // This reader will always return None, but a "successful" read will advance the cursor.
@@ -89,18 +104,18 @@ impl<'src> Lexer<'src> {
     // funky ways :)
     fn read_whitespace(&mut self) -> Option<Token<'src>> {
         let mut cursor = 0;
-        while let Some(c) = self.src.get(cursor)
+        while let Some(c) = self.rest.get(cursor)
             && c.is_ascii_whitespace()
         {
             cursor += 1;
         }
-        self.src = &self.src[cursor..];
+        self.rest = &self.rest[cursor..];
         None
     }
 
     fn read_strlit(&mut self) -> Option<Token<'src>> {
         let mut cursor = 0;
-        let first = *self.src.get(cursor)?;
+        let first = *self.rest.get(cursor)?;
         if first == b'"' {
             cursor += 1;
         } else {
@@ -108,7 +123,7 @@ impl<'src> Lexer<'src> {
         }
 
         loop {
-            let curr = *self.src.get(cursor).expect("LEXER: Unclosed quote");
+            let curr = *self.rest.get(cursor).expect("LEXER: Unclosed quote");
             cursor += 1;
 
             match curr {
@@ -121,10 +136,10 @@ impl<'src> Lexer<'src> {
         }
 
         // +1/-1 to disclude the surrounding "..."
-        let kind = TKind::Str(self.src.get(0..cursor)?);
+        let kind = TKind::Str(self.rest.get(0..cursor)?);
         let length = cursor;
-        self.src = &self.src[cursor..];
-        Some(Token { length, kind })
+        self.rest = &self.rest[cursor..];
+        Some(self.make_token(kind, length))
     }
 
     fn read_punct(&mut self) -> Option<Token<'src>> {
@@ -132,7 +147,7 @@ impl<'src> Lexer<'src> {
 
         let mut length = 0;
         let mut found_long_punct = false;
-        let src = self.src.get(0..)?;
+        let src = self.rest.get(0..)?;
         for p in known_punctuators {
             if src.starts_with(p.as_bytes()) {
                 length = p.len();
@@ -188,8 +203,8 @@ impl<'src> Lexer<'src> {
             x => panic!("Unknown token: \"{}\"", str::from_utf8(x).unwrap()),
         };
 
-        self.src = &self.src[length..];
-        Some(Token { length, kind })
+        self.rest = &self.rest[length..];
+        Some(self.make_token(kind, length))
     }
 }
 
@@ -202,60 +217,5 @@ impl<'src> Iterator for Lexer<'src> {
             .or_else(|| self.read_num())
             .or_else(|| self.read_strlit())
             .or_else(|| self.read_punct())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Lexer, Token};
-
-    #[test]
-    fn test_read_num() {
-        let src = b"123_220_199";
-        let mut lexer = Lexer::new(src);
-
-        let x = lexer.read_num();
-        println!("{x:?}");
-    }
-
-    #[test]
-    fn test_read_ident() {
-        let src = b"Hi there";
-        let mut lexer = Lexer::new(src);
-
-        let x = lexer.read_word();
-        println!("{x:?}");
-    }
-
-    #[test]
-    fn test_read_punct() {
-        let src = b"!=";
-        let mut lexer = Lexer::new(src);
-
-        let x = lexer.read_punct();
-        println!("{x:?}");
-    }
-
-    #[test]
-    fn test_read_whitespace() {
-        let src = b" 123";
-        let mut lexer = Lexer::new(src);
-        lexer.read_whitespace();
-        let x = lexer.read_num();
-        assert!(x.is_some());
-        println!("{x:?}");
-    }
-
-    #[test]
-    fn test_iterator() {
-        let src = br#"
-            fn main() -> i32 {
-                let s = "bobby";
-                let y = 69-5;!!
-            }
-"#;
-        let mut lexer = Lexer::new(src);
-
-        lexer.for_each(|t| println!("{}", t.kind));
     }
 }

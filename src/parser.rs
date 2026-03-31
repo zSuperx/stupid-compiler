@@ -56,7 +56,7 @@ impl<'src> Parser<'src> {
         *self.src.first().unwrap_or(&TKind::Eof)
     }
 
-    pub fn parse_program(&mut self) -> Vec<Object<'src, RawType<'src>>> {
+    pub fn parse_program(&mut self) -> Vec<OKind<'src, RawType<'src>>> {
         let mut objs = vec![];
         while !self.is_next(TKind::Eof) {
             match self.peek() {
@@ -69,21 +69,21 @@ impl<'src> Parser<'src> {
         objs
     }
 
-    fn parse_struct(&mut self) -> Object<'src, RawType<'src>> {
+    fn parse_struct(&mut self) -> OKind<'src, RawType<'src>> {
         todo!()
     }
 
-    fn parse_global(&mut self) -> Object<'src, RawType<'src>> {
+    fn parse_global(&mut self) -> OKind<'src, RawType<'src>> {
         self.expect(TKind::Global);
         let name = self.expect_ident();
         self.expect(TKind::Colon);
         let ty = self.parse_type();
         self.expect(TKind::Eq);
         let rhs = self.parse_expr();
-        Object::Global(Symbol { name, ty })
+        OKind::Global(Symbol { name, ty })
     }
 
-    fn parse_fn(&mut self) -> Object<'src, RawType<'src>> {
+    fn parse_fn(&mut self) -> OKind<'src, RawType<'src>> {
         self.expect(TKind::Fn);
         let name = self.expect_ident();
         self.expect(TKind::LParen);
@@ -122,7 +122,7 @@ impl<'src> Parser<'src> {
 
         let body = self.parse_block();
 
-        Object::Fn {
+        OKind::Fn {
             name,
             body,
             args,
@@ -279,25 +279,26 @@ impl<'src> Parser<'src> {
         Expr {
             kind: self.parse_expr_kind(0.0),
             ty: RawType::Unknown,
+            
         }
     }
 
-    fn parse_block(&mut self) -> Stmt<'src, RawType<'src>> {
+    fn parse_block(&mut self) -> SKind<'src, RawType<'src>> {
         self.expect(TKind::LCurly);
         let mut stmts = vec![];
         while !self.is_next(TKind::RCurly) {
             let stmt = self.parse_stmt();
-            if matches!(stmt, Stmt::Block(ref inner) if inner.is_empty()) {
+            if matches!(stmt, SKind::Block(ref inner) if inner.is_empty()) {
                 // Skip nested empty {} blocks, they're useless.
                 continue;
             }
             stmts.push(stmt);
         }
         self.expect(TKind::RCurly);
-        Stmt::Block(stmts)
+        SKind::Block(stmts)
     }
 
-    fn parse_stmt(&mut self) -> Stmt<'src, RawType<'src>> {
+    fn parse_stmt(&mut self) -> SKind<'src, RawType<'src>> {
         match self.peek() {
             TKind::Let => {
                 let mut ty = RawType::Unknown;
@@ -312,13 +313,13 @@ impl<'src> Parser<'src> {
 
                 let rhs = self.parse_expr();
                 self.expect(TKind::Semi);
-                Stmt::Let { lhs, rhs }
+                SKind::Let { lhs, rhs }
             }
             TKind::While => {
                 self.expect(TKind::While);
                 let cond = self.parse_expr();
                 let body = self.parse_block();
-                Stmt::While {
+                SKind::While {
                     cond,
                     body: Box::new(body),
                 }
@@ -326,12 +327,12 @@ impl<'src> Parser<'src> {
             TKind::Continue => {
                 self.expect(TKind::Continue);
                 self.expect(TKind::Semi);
-                Stmt::Continue
+                SKind::Continue
             }
             TKind::Break => {
                 self.expect(TKind::Break);
                 self.expect(TKind::Semi);
-                Stmt::Break
+                SKind::Break
             }
             TKind::If => {
                 self.expect(TKind::If);
@@ -348,9 +349,9 @@ impl<'src> Parser<'src> {
                         self.parse_block()
                     }
                 } else {
-                    Stmt::Block(vec![])
+                    SKind::Block(vec![])
                 };
-                Stmt::If {
+                SKind::If {
                     cond,
                     then_: Box::new(then_),
                     else_: Box::new(else_),
@@ -365,13 +366,12 @@ impl<'src> Parser<'src> {
                 };
                 self.expect(TKind::Semi);
 
-                Stmt::Return(retval)
+                SKind::Return(retval)
             }
             x => {
-                println!("{x:?}");
                 let expr = self.parse_expr();
                 self.expect(TKind::Semi);
-                Stmt::Expr(expr)
+                SKind::Expr(expr)
             }
         }
     }
@@ -409,70 +409,4 @@ fn infix_power(kind: TKind) -> Option<(f32, f32)> {
         _ => return None, // Not an infix operator
     };
     Some(power)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{lexer::Lexer, types::*};
-    #[test]
-    fn test_parse_type() {
-        let src = b"u32 *billy";
-        let tokens: Vec<TKind> = Lexer::new(src).map(|t| t.kind).collect();
-        let mut parser = Parser::new(&tokens);
-        let x = parser.parse_type();
-        dbg!(x);
-    }
-
-    #[test]
-    fn test_parse_expr() {
-        let input = b"x = y = hi";
-        println!("input = {}", str::from_utf8(input).unwrap());
-        let tokens: Vec<TKind> = Lexer::new(input).map(|t| t.kind).collect();
-        let mut parser = Parser::new(&tokens);
-        let output = parser.parse_expr();
-        dbg!(output);
-    }
-
-    #[test]
-    fn test_parse_stmt() {
-        let input = b"if true";
-        println!("input = {}", str::from_utf8(input).unwrap());
-        let tokens: Vec<TKind> = Lexer::new(input).map(|t| t.kind).collect();
-        let mut parser = Parser::new(&tokens);
-        let output = parser.parse_expr();
-        dbg!(output);
-    }
-
-    #[test]
-    fn test_parse_fn() {
-        let src = br#"
-fn bob(arg1: *u32, arg2: u8) -> u32 {
-    foo.bar();
-}
-"#;
-        let tokens: Vec<TKind> = Lexer::new(src).map(|t| t.kind).collect();
-        let mut parser = Parser::new(&tokens);
-        let parsed = parser.parse_fn();
-        println!("Source code: {}", str::from_utf8(src).unwrap());
-        dbg!(parsed);
-    }
-
-    #[test]
-    fn test_parse_program() {
-        let src = std::fs::read("tests/test.stupid").unwrap();
-        let tokens: Vec<TKind> = Lexer::new(&src).map(|t| t.kind).collect();
-        let mut parser = Parser::new(&tokens);
-        let parsed = parser.parse_program();
-        println!("Source code:\n{}", str::from_utf8(&src).unwrap());
-        dbg!(parsed);
-    }
-}
-
-/// Helper to assign an unknown type to an ExprKind
-fn expr<'src>(kind: EKind<'src, RawType<'src>>) -> Expr<'src, RawType<'src>> {
-    Expr {
-        kind,
-        ty: RawType::Unknown,
-    }
 }

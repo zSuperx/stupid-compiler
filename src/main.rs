@@ -1,12 +1,12 @@
 #![allow(unused)]
 
-use crate::lexer::Lexer;
+use crate::{emitter::Emitter, lexer::Lexer, parser::Parser, resolver::Resolver};
 
 mod lexer;
 mod parser;
 mod types;
 mod resolver;
-mod codegen;
+mod emitter;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -19,9 +19,9 @@ fn main() {
     let file = &args[1];
     let content = std::fs::read(file).unwrap();
 
-    let mut lexer = Lexer::new(&content);
-
-    for token in lexer {
-        println!("{}", token.kind);
-    }
+    let lexed = Lexer::new(&content).map(|t| t.kind).collect::<Vec<_>>();
+    let parsed = Parser::new(&lexed).parse_program();
+    let resolved = Resolver::new().resolve_program(&parsed);
+    let emitted = Emitter::new().emit_program(&resolved);
+    println!("{emitted}");
 }
