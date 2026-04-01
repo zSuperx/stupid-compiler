@@ -7,13 +7,12 @@ pub struct Resolver<'src> {
     scope_stack: Vec<HashMap<&'src str, Symbol<'src, ResolvedType>>>,
     return_type_stack: Vec<ResolvedType>,
     loop_stack: usize,
-    src: &'src [u8],
 }
 
 pub type Terminates = bool;
 
 impl<'src> Resolver<'src> {
-    pub fn new(src: &'src [u8]) -> Self {
+    pub fn new() -> Self {
         use ResolvedType::*;
         let types = HashMap::from([
             ("u8", U8),
@@ -33,7 +32,6 @@ impl<'src> Resolver<'src> {
             scope_stack: vec![HashMap::new()],
             return_type_stack: vec![],
             loop_stack: 0,
-            src,
         }
     }
 
@@ -50,7 +48,7 @@ impl<'src> Resolver<'src> {
             RawType::Base(x) => self.types.get(x).cloned(),
             RawType::Pointer(raw_type) => self
                 .resolve_type(raw_type)
-                .map(|t| ResolvedType::Pointer((Box::new(t)))),
+                .map(|t| ResolvedType::Pointer(Box::new(t))),
         }
     }
 
@@ -115,23 +113,13 @@ impl<'src> Resolver<'src> {
                     body: resolved_body,
                 }
             }
-            OKind::Global(symbol) => todo!(),
-            OKind::Struct { name, fields } => todo!(),
+            OKind::Global { .. } => todo!(),
+            OKind::Struct { .. } => todo!(),
         };
 
         Object {
             kind,
             span: obj.span,
-        }
-    }
-
-    fn resolve_symbol(&mut self, sym: &Symbol<'src, RawType<'src>>) -> Symbol<'src, ResolvedType> {
-        Symbol {
-            name: sym.name,
-            ty: self.resolve_type(&sym.ty).expect(&format!(
-                "Unknown type on variable {}: {}",
-                sym.name, sym.ty
-            )),
         }
     }
 
@@ -308,16 +296,16 @@ impl<'src> Resolver<'src> {
                     if lhs.ty != rhs.ty {
                         panic!("Mismatched types lhs = {}, rhs = {}", lhs.ty, rhs.ty);
                     }
-                    let mut valid_lvalue = match &lhs.kind {
+                    let valid_lvalue = match &lhs.kind {
                         EKind::Symbol(symbol) => {
                             !matches!(symbol.ty, ResolvedType::Function { .. })
                         }
                         EKind::Unary {
                             op: UnOp::Deref,
-                            rhs,
+                            ..
                         } => true,
-                        EKind::FieldAccess { lhs, rhs } => true,
-                        x => false,
+                        EKind::FieldAccess { .. } => true,
+                        _ => false,
                     };
                     if !valid_lvalue {
                         panic!("Expression is not assignable\n\n{}", lhs.span);
@@ -332,10 +320,9 @@ impl<'src> Resolver<'src> {
                         span: expr.span,
                     }
                 }
-                op @ (BinOp::Add | BinOp::Sub | BinOp::Sub | BinOp::Mul | BinOp::Div) => {
+                op @ (BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div) => {
                     let lhs = self.resolve_expr(lhs, hint);
                     let rhs = self.resolve_expr(rhs, &lhs.ty);
-                    use ResolvedType::*;
                     if lhs.ty != rhs.ty {
                         panic!("Mismatched types lhs = {}, rhs = {}", lhs.ty, rhs.ty);
                     }
@@ -358,7 +345,6 @@ impl<'src> Resolver<'src> {
                 op @ (BinOp::Gt | BinOp::Ge | BinOp::Lt | BinOp::Le) => {
                     let lhs = self.resolve_expr(lhs, hint);
                     let rhs = self.resolve_expr(rhs, &lhs.ty);
-                    use ResolvedType::*;
                     if lhs.ty != rhs.ty {
                         panic!("Mismatched types lhs = {}, rhs = {}", lhs.ty, rhs.ty);
                     }
@@ -381,7 +367,6 @@ impl<'src> Resolver<'src> {
                 op @ (BinOp::Eq | BinOp::Ne) => {
                     let lhs = self.resolve_expr(lhs, hint);
                     let rhs = self.resolve_expr(rhs, &lhs.ty);
-                    use ResolvedType::*;
                     if lhs.ty != rhs.ty {
                         panic!("Mismatched types lhs = {}, rhs = {}", lhs.ty, rhs.ty);
                     }
@@ -418,8 +403,8 @@ impl<'src> Resolver<'src> {
                     }
                 }
             },
-            EKind::FieldAccess { lhs, rhs } => todo!(),
-            EKind::Index { lhs, rhs } => todo!(),
+            EKind::FieldAccess { .. } => todo!(),
+            EKind::Index { .. } => todo!(),
         }
     }
 

@@ -2,40 +2,38 @@ use crate::types::*;
 
 pub struct Parser<'src> {
     tokens: &'src [Token<'src>],
-    src: &'src [u8],
     last_span: Span<'src>,
 }
 
 impl<'src> Parser<'src> {
-    pub fn new(tokens: &'src [Token<'src>], src: &'src [u8]) -> Self {
+    pub fn new(tokens: &'src [Token<'src>]) -> Self {
         Self {
             tokens,
-            src,
             last_span: Span {
-                src,
+                src: &[],
                 ..Default::default()
             },
         }
     }
 
-    fn make_expr(
+    fn mark(&self) -> Span<'src> {
+        self.peek().span
+    }
+
+    fn commit_expr(
         &mut self,
         kind: EKind<'src, RawType<'src>>,
         span: Span<'src>,
     ) -> Expr<'src, RawType<'src>> {
-        Expr {
-            kind,
-            ty: RawType::Unknown,
-            span,
-        }
+        Expr::new(kind, RawType::Unknown, span.merge(self.last_span))
     }
 
-    fn make_stmt(
+    fn commit_stmt(
         &mut self,
         kind: SKind<'src, RawType<'src>>,
         span: Span<'src>,
     ) -> Stmt<'src, RawType<'src>> {
-        Stmt { kind, span }
+        Stmt::new(kind, span.merge(self.last_span))
     }
 
     /// Peeks the next token and checks its kind
@@ -72,7 +70,7 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn expect_strlit(&mut self) -> &'src [u8] {
+    fn _expect_strlit(&mut self) -> &'src [u8] {
         let next = self.consume();
         match next.kind {
             TKind::Str(s) => s,
@@ -83,7 +81,7 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn expect_intlit(&mut self) -> u64 {
+    fn _expect_intlit(&mut self) -> u64 {
         let next = self.consume();
         match next.kind {
             TKind::Int(s) => s,
@@ -110,22 +108,25 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_global(&mut self) -> Object<'src, RawType<'src>> {
+        let span_start = self.mark();
         self.expect(TKind::Global);
-        let span = self.last_span;
         let name = self.expect_ident();
         self.expect(TKind::Colon);
         let ty = self.parse_type();
         self.expect(TKind::Eq);
         let rhs = self.parse_expr();
         Object {
-            kind: OKind::Global(Symbol { name, ty }),
-            span: span.merge(self.last_span),
+            kind: OKind::Global {
+                lhs: Symbol { name, ty },
+                rhs,
+            },
+            span: span_start.merge(self.last_span),
         }
     }
 
     fn parse_fn(&mut self) -> Object<'src, RawType<'src>> {
+        let span_start = self.mark();
         self.expect(TKind::Fn);
-        let span = self.last_span;
         let name = self.expect_ident();
         self.expect(TKind::LParen);
 
@@ -170,13 +171,13 @@ impl<'src> Parser<'src> {
                 args,
                 returns,
             },
-            span: span.merge(self.last_span),
+            span: span_start.merge(self.last_span),
         }
     }
 
     fn parse_type(&mut self) -> RawType<'src> {
         let tok = self.peek();
-        let mut ty = match tok.kind {
+        let ty = match tok.kind {
             TKind::Star => {
                 self.consume();
                 return RawType::Pointer(Box::new(self.parse_type()));
@@ -189,8 +190,8 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_prefix(&mut self) -> Expr<'src, RawType<'src>> {
+        let span_start = self.mark();
         let tok = self.consume();
-        let span = self.last_span;
         let kind = match tok.kind {
             TKind::Ident(s) => EKind::Symbol(Symbol {
                 name: s,
@@ -214,9 +215,12 @@ impl<'src> Parser<'src> {
                 self.expect(TKind::RParen);
                 inner.kind
             }
-            x => panic!("Expected start of expression, found \"{x}\"\n\n{}", tok.span),
+            x => panic!(
+                "Expected start of expression, found \"{x}\"\n\n{}",
+                tok.span
+            ),
         };
-        self.make_expr(kind, span.merge(self.last_span))
+        self.commit_expr(kind, span_start.merge(self.last_span))
     }
 
     fn parse_infix(
@@ -225,7 +229,7 @@ impl<'src> Parser<'src> {
         op: TKind<'src>,
         op_power: f32,
     ) -> Expr<'src, RawType<'src>> {
-        let span = lhs.span;
+        let span_start = lhs.span;
         let kind = match op {
             TKind::LParen => {
                 let mut args = vec![];
@@ -288,7 +292,10 @@ impl<'src> Parser<'src> {
             TKind::Dot => {
                 let field = self._parse_expr(op_power);
                 if !matches!(field.kind, EKind::Symbol(_)) {
-                    panic!("Fields can only be accessed with an identifier, not a {}\n\n{}", field.kind, field.span);
+                    panic!(
+                        "Fields can only be accessed with an identifier, not a {}\n\n{}",
+                        field.kind, field.span
+                    );
                 }
                 EKind::FieldAccess {
                     lhs: Box::new(lhs),
@@ -297,7 +304,7 @@ impl<'src> Parser<'src> {
             }
             x => panic!("Expected infix operator, found {x}\n\n{}", lhs.span),
         };
-        self.make_expr(kind, span.merge(self.last_span))
+        self.commit_expr(kind, span_start)
     }
 
     // Pratt parsing!
@@ -328,8 +335,8 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_block(&mut self) -> Stmt<'src, RawType<'src>> {
+        let span_start = self.mark();
         self.expect(TKind::LCurly);
-        let span = self.last_span;
         let mut stmts = vec![];
         while !self.is_next(TKind::RCurly) {
             let stmt = self.parse_stmt();
@@ -340,17 +347,16 @@ impl<'src> Parser<'src> {
             stmts.push(stmt);
         }
         self.expect(TKind::RCurly);
-        self.make_stmt(SKind::Block(stmts), span.merge(self.last_span))
+        self.commit_stmt(SKind::Block(stmts), span_start)
     }
 
     fn parse_stmt(&mut self) -> Stmt<'src, RawType<'src>> {
-        let span;
+        let span_start = self.mark();
         let tok = self.peek();
         let kind = match tok.kind {
             TKind::Let => {
                 let mut ty = RawType::Unknown;
                 self.expect(TKind::Let);
-                span = self.last_span;
                 let name = self.expect_ident();
                 if self.is_next(TKind::Colon) {
                     self.expect(TKind::Colon);
@@ -365,7 +371,6 @@ impl<'src> Parser<'src> {
             }
             TKind::While => {
                 self.expect(TKind::While);
-                span = self.last_span;
                 let cond = self.parse_expr();
                 let body = self.parse_block();
                 SKind::While {
@@ -375,19 +380,16 @@ impl<'src> Parser<'src> {
             }
             TKind::Continue => {
                 self.expect(TKind::Continue);
-                span = self.last_span;
                 self.expect(TKind::Semi);
                 SKind::Continue
             }
             TKind::Break => {
                 self.expect(TKind::Break);
-                span = self.last_span;
                 self.expect(TKind::Semi);
                 SKind::Break
             }
             TKind::If => {
                 self.expect(TKind::If);
-                span = self.last_span;
                 let cond = self.parse_expr();
                 let then_ = self.parse_block();
 
@@ -401,7 +403,7 @@ impl<'src> Parser<'src> {
                         self.parse_block()
                     }
                 } else {
-                    self.make_stmt(SKind::Block(vec![]), self.last_span)
+                    self.commit_stmt(SKind::Block(vec![]), self.last_span)
                 };
                 SKind::If {
                     cond,
@@ -411,11 +413,10 @@ impl<'src> Parser<'src> {
             }
             TKind::Return => {
                 self.expect(TKind::Return);
-                span = self.last_span;
                 let retval = if !self.is_next(TKind::Semi) {
                     self.parse_expr()
                 } else {
-                    self.make_expr(EKind::Nothing, span)
+                    self.commit_expr(EKind::Nothing, span_start)
                 };
                 self.expect(TKind::Semi);
 
@@ -424,15 +425,14 @@ impl<'src> Parser<'src> {
             TKind::LCurly => {
                 return self.parse_block();
             }
-            x => {
+            _ => {
                 let expr = self.parse_expr();
-                span = expr.span;
                 self.expect(TKind::Semi);
                 SKind::Expr(expr)
             }
         };
 
-        self.make_stmt(kind, span.merge(self.last_span))
+        self.commit_stmt(kind, span_start)
     }
 }
 
@@ -477,10 +477,10 @@ mod tests {
 
     #[test]
     fn test_parse_expr() {
-        let src = b"5+5";
+        let src = b"5+7*9";
         let lexed: Vec<_> = Lexer::new(src).collect();
         // println!("{lexed:#?}");
-        let parsed = Parser::new(&lexed, src).parse_expr();
+        let parsed = Parser::new(&lexed).parse_expr();
         println!("{parsed:#?}");
     }
 }

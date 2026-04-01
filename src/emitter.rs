@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::DerefMut};
+use std::collections::HashMap;
 
 use crate::types::*;
 
@@ -79,12 +79,14 @@ impl<'src> Emitter<'src> {
                     self.symbols.insert(arg.name, target);
                 }
                 self.emit_stmt(body);
-                if *returns == ResolvedType::Void && !self.program.last().unwrap().contains("\tret\n") {
+                if *returns == ResolvedType::Void
+                    && !self.program.last().unwrap().contains("\tret\n")
+                {
                     self.emit_raw("ret");
                 }
             }
-            OKind::Global(symbol) => todo!(),
-            OKind::Struct { name, fields } => todo!(),
+            OKind::Global { .. } => todo!(),
+            OKind::Struct { .. } => todo!(),
         }
     }
 
@@ -156,7 +158,7 @@ impl<'src> Emitter<'src> {
         }
     }
 
-    fn emit_expr(&mut self, Expr { kind, ty, span }: &Expr<'src, ResolvedType>) -> VReg {
+    fn emit_expr(&mut self, Expr { kind, .. }: &Expr<'src, ResolvedType>) -> VReg {
         let target;
         let template = match kind {
             EKind::Symbol(symbol) => {
@@ -175,7 +177,7 @@ impl<'src> Emitter<'src> {
                 target = self.vr_count;
                 format!("")
             }
-            EKind::Str(items) => todo!(),
+            EKind::Str(_) => todo!(),
             EKind::Call { callee, args } => {
                 target = self.next_vr();
                 let mut nodes: Vec<_> = args.iter().map(|arg| self.emit_expr(arg)).collect();
@@ -260,8 +262,8 @@ impl<'src> Emitter<'src> {
                     format!("%{target} = {op_str} %{}, %{}", lhs, rhs)
                 }
             },
-            EKind::FieldAccess { lhs, rhs } => todo!(),
-            EKind::Index { lhs, rhs } => todo!(),
+            EKind::FieldAccess { .. } => todo!(),
+            EKind::Index { .. } => todo!(),
         };
         self.emit_raw(&template);
         target

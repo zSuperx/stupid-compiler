@@ -1,5 +1,3 @@
-use std::{default, fmt::Display};
-
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Token<'src> {
     pub kind: TKind<'src>,
@@ -94,7 +92,10 @@ pub enum OKind<'src, T> {
         args: Vec<Symbol<'src, T>>,
         body: Stmt<'src, T>,
     },
-    Global(Symbol<'src, T>),
+    Global {
+        lhs: Symbol<'src, T>,
+        rhs: Expr<'src, T>,
+    },
     Struct {
         name: &'src str,
         fields: Vec<Symbol<'src, T>>,
@@ -288,16 +289,16 @@ pub struct Expr<'src, T> {
 impl<'src, T> std::fmt::Display for EKind<'src, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            EKind::Symbol(symbol) => "variable",
+            EKind::Symbol(_) => "variable",
             EKind::Int(_) => "int",
             EKind::Bool(_) => "bool",
             EKind::Nothing => "nothing",
-            EKind::Str(items) => "string",
-            EKind::Call { callee, args } => "function call",
-            EKind::Unary { op, rhs } => "unary operation",
-            EKind::Bin { op, lhs, rhs } => "binary operation",
-            EKind::FieldAccess { lhs, rhs } => "field access",
-            EKind::Index { lhs, rhs } => "array index",
+            EKind::Str(_) => "string",
+            EKind::Call { .. } => "function call",
+            EKind::Unary { .. } => "unary operation",
+            EKind::Bin { .. } => "binary operation",
+            EKind::FieldAccess { .. } => "field access",
+            EKind::Index { .. } => "array index",
         };
         f.write_str(s)
     }
