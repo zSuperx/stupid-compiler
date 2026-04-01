@@ -1,3 +1,8 @@
+fn voidreturner() {
+
+}
+
 fn bobby() {
-  let x = 5;
+  let x = voidreturner(); 
+  return x;
 }

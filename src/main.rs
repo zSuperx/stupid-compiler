@@ -26,6 +26,6 @@ fn main() {
     // println!("{parsed:#?}");
     let resolved = Resolver::new(&content).resolve_program(&parsed);
     // println!("{resolved:#?}");
-    let emitted = Emitter::new().emit_program(&resolved);
+    let emitted = Emitter::new().emit_program(&resolved).join("");
     println!("{emitted}");
 }

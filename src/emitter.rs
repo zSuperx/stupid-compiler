@@ -6,7 +6,7 @@ pub struct Emitter<'src> {
     vr_count: VReg,
     if_label: usize,
     loop_label: usize,
-    program: String,
+    program: Vec<String>,
     symbols: HashMap<&'src str, VReg>,
 }
 
@@ -18,23 +18,20 @@ impl<'src> Emitter<'src> {
             vr_count: 0,
             if_label: 0,
             loop_label: 0,
-            program: String::new(),
+            program: Vec::new(),
             symbols: HashMap::new(),
         }
     }
 
     fn emit_raw(&mut self, next_program: &str) {
         if !next_program.is_empty() {
-            self.program.push_str("\t");
-            self.program.push_str(next_program);
-            self.program.push_str("\n");
+            self.program.push(format!("\t{next_program}\n"));
         }
     }
 
     fn emit_label(&mut self, label: &str) {
         if !label.is_empty() {
-            self.program.push_str(label);
-            self.program.push_str(":\n");
+            self.program.push(format!("{label}:\n"));
         }
     }
 
@@ -57,7 +54,7 @@ impl<'src> Emitter<'src> {
         self.vr_count
     }
 
-    pub fn emit_program(mut self, objs: &[Object<'src, ResolvedType>]) -> String {
+    pub fn emit_program(mut self, objs: &[Object<'src, ResolvedType>]) -> Vec<String> {
         for obj in objs {
             self.emit_object(obj);
         }
@@ -82,6 +79,9 @@ impl<'src> Emitter<'src> {
                     self.symbols.insert(arg.name, target);
                 }
                 self.emit_stmt(body);
+                if *returns == ResolvedType::Void && !self.program.last().unwrap().contains("\tret\n") {
+                    self.emit_raw("ret");
+                }
             }
             OKind::Global(symbol) => todo!(),
             OKind::Struct { name, fields } => todo!(),
@@ -140,8 +140,12 @@ impl<'src> Emitter<'src> {
                 self.emit_label(&end_label);
             }
             SKind::Return(expr) => {
-                let ret = self.emit_expr(expr);
-                self.emit_raw(&format!("ret %{ret}"));
+                if expr.ty != ResolvedType::Void {
+                    let ret = self.emit_expr(expr);
+                    self.emit_raw(&format!("ret %{ret}"));
+                } else {
+                    self.emit_raw(&format!("ret"));
+                }
             }
             SKind::Block(stmts) => {
                 for stmt in stmts {
@@ -168,8 +172,8 @@ impl<'src> Emitter<'src> {
                 format!("%{target} = int({})", *x as u8)
             }
             EKind::Nothing => {
-                target = self.next_vr();
-                format!("%{target} = int(0)")
+                target = self.vr_count;
+                format!("")
             }
             EKind::Str(items) => todo!(),
             EKind::Call { callee, args } => {

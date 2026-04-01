@@ -521,13 +521,15 @@ impl<'src> Resolver<'src> {
             SKind::Block(stmts) => {
                 self.scope_stack.push(HashMap::new());
                 let mut terminates = false;
+                let mut last_span = span;
                 let stmts = stmts
                     .iter()
                     .map(|s| {
                         let (s, t) = self.resolve_stmt(s);
                         if terminates {
-                            panic!("Unreachable code after this statement\n\n{}", s.span);
+                            panic!("Unreachable code after this statement\n\n{}", last_span);
                         }
+                        last_span = s.span;
                         terminates = t;
                         s
                     })

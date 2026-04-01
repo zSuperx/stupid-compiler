@@ -421,6 +421,9 @@ impl<'src> Parser<'src> {
 
                 SKind::Return(retval)
             }
+            TKind::LCurly => {
+                return self.parse_block();
+            }
             x => {
                 let expr = self.parse_expr();
                 span = expr.span;
