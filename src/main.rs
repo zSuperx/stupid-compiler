@@ -1,6 +1,7 @@
+#![feature(breakpoint)]
 #![allow(unused)]
 
-use crate::{emitter::Emitter, lexer::Lexer, parser::Parser, resolver::Resolver};
+use crate::{emitter::Emitter, lexer::Lexer, parser::Parser, resolver::Resolver, types::TKind};
 
 mod lexer;
 mod parser;
@@ -19,9 +20,12 @@ fn main() {
     let file = &args[1];
     let content = std::fs::read(file).unwrap();
 
-    let lexed = Lexer::new(&content).map(|t| t.kind).collect::<Vec<_>>();
-    let parsed = Parser::new(&lexed).parse_program();
-    let resolved = Resolver::new().resolve_program(&parsed);
+    let lexed = Lexer::new(&content).filter(|t| t.kind != TKind::Whitespace).collect::<Vec<_>>();
+    // println!("{lexed:#?}");
+    let parsed = Parser::new(&lexed, &content).parse_program();
+    // println!("{parsed:#?}");
+    let resolved = Resolver::new(&content).resolve_program(&parsed);
+    // println!("{resolved:#?}");
     let emitted = Emitter::new().emit_program(&resolved);
     println!("{emitted}");
 }

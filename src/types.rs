@@ -3,7 +3,7 @@ use std::{default, fmt::Display};
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Token<'src> {
     pub kind: TKind<'src>,
-    pub span: Span,
+    pub span: Span<'src>,
 }
 
 impl<'src> std::fmt::Display for TKind<'src> {
@@ -24,6 +24,7 @@ impl<'src> std::fmt::Display for TKind<'src> {
 pub enum TKind<'src> {
     #[default]
     Eof,
+    Whitespace,
     Int(u64),
     Bool(bool),
     Str(&'src [u8]),
@@ -91,13 +92,19 @@ pub enum OKind<'src, T> {
         name: &'src str,
         returns: T,
         args: Vec<Symbol<'src, T>>,
-        body: SKind<'src, T>,
+        body: Stmt<'src, T>,
     },
     Global(Symbol<'src, T>),
     Struct {
         name: &'src str,
         fields: Vec<Symbol<'src, T>>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct Object<'src, T> {
+    pub kind: OKind<'src, T>,
+    pub span: Span<'src>,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +116,8 @@ pub enum RawType<'src> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedType {
+    Infer,
+
     U8,
     U16,
     U32,
@@ -134,6 +143,57 @@ pub struct Symbol<'src, T> {
     pub ty: T,
 }
 
+impl<'src> std::fmt::Display for RawType<'src> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            RawType::Unknown => "{unknown}".to_string(),
+            RawType::Base(s) => s.to_string(),
+            RawType::Pointer(raw_type) => format!("*{raw_type}"),
+        };
+        f.write_str(&s)
+    }
+}
+
+impl std::fmt::Display for ResolvedType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            ResolvedType::Infer => "{unknown}".to_string(),
+            ResolvedType::U8 => "u8".to_string(),
+            ResolvedType::U16 => "u16".to_string(),
+            ResolvedType::U32 => "u32".to_string(),
+            ResolvedType::U64 => "u64".to_string(),
+            ResolvedType::I8 => "i8".to_string(),
+            ResolvedType::I16 => "i16".to_string(),
+            ResolvedType::I32 => "i32".to_string(),
+            ResolvedType::I64 => "i64".to_string(),
+            ResolvedType::Bool => "bool".to_string(),
+            ResolvedType::Void => "void".to_string(),
+            ResolvedType::Function { args, returns } => {
+                let args = args
+                    .iter()
+                    .map(|arg| format!("{arg}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("fn({args}) -> {returns}")
+            }
+            ResolvedType::Pointer(resolved_type) => format!("*{resolved_type}"),
+        };
+        f.write_str(&s)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Stmt<'src, T> {
+    pub kind: SKind<'src, T>,
+    pub span: Span<'src>,
+}
+
+impl<'src, T> Stmt<'src, T> {
+    pub fn new(kind: SKind<'src, T>, span: Span<'src>) -> Self {
+        Self { kind, span }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum SKind<'src, T> {
     Let {
@@ -142,32 +202,79 @@ pub enum SKind<'src, T> {
     },
     While {
         cond: Expr<'src, T>,
-        body: Box<SKind<'src, T>>,
+        body: Box<Stmt<'src, T>>,
     },
     Continue,
     Break,
     If {
         cond: Expr<'src, T>,
-        then_: Box<SKind<'src, T>>,
-        else_: Box<SKind<'src, T>>,
+        then_: Box<Stmt<'src, T>>,
+        else_: Box<Stmt<'src, T>>,
     },
     Return(Expr<'src, T>),
-    Block(Vec<SKind<'src, T>>),
+    Block(Vec<Stmt<'src, T>>),
     Expr(Expr<'src, T>),
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Span(pub usize, pub usize);
+#[derive(Clone, Copy, Default)]
+pub struct Span<'src> {
+    pub lo: usize,
+    pub hi: usize,
+    pub src: &'src [u8],
+}
 
-impl Display for Span {
+impl<'src> std::fmt::Debug for Span<'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}-{}", self.0, self.1))
+        f.debug_struct("Span")
+            .field("lo", &self.lo)
+            .field("hi", &self.hi)
+            // Omit `internal_secret` entirely
+            .finish()
     }
 }
 
-impl Span {
+impl<'src> std::fmt::Display for Span<'src> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let line_start = self.src[..self.lo]
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map(|pos| pos + 1)
+            .unwrap_or(0);
+
+        let line_end = self.src[self.lo..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|pos| self.lo + pos)
+            .unwrap_or(self.src.len());
+
+        let line_text =
+            std::str::from_utf8(&self.src[line_start..line_end]).unwrap_or("<invalid utf8>");
+
+        let before_span_count = self.lo.saturating_sub(line_start);
+
+        let is_multiline = self.hi > line_end;
+        let effective_hi = if is_multiline { line_end } else { self.hi };
+
+        let caret_count = effective_hi.saturating_sub(self.lo).max(1);
+
+        let spaces = " ".repeat(before_span_count);
+        let mut carets = "^".repeat(caret_count);
+
+        if is_multiline {
+            carets.push_str("...");
+        }
+
+        write!(f, "{}\n{}{}", line_text, spaces, carets)
+    }
+}
+
+impl<'src> Span<'src> {
     pub fn merge(self, other: Self) -> Self {
-        Self(self.0.min(other.0), self.1.max(other.1))
+        Self {
+            lo: self.lo.min(other.lo),
+            hi: self.hi.max(other.hi),
+            src: self.src,
+        }
     }
 }
 
@@ -175,15 +282,30 @@ impl Span {
 pub struct Expr<'src, T> {
     pub kind: EKind<'src, T>,
     pub ty: T,
+    pub span: Span<'src>,
 }
 
-impl<'src> Expr<'src, RawType<'src>> {
-    pub fn unknown(kind: EKind<'src, RawType<'src>>, span: Span) -> Self {
-        Self {
-            kind,
-            ty: RawType::Unknown,
-            // span,
-        }
+impl<'src, T> std::fmt::Display for EKind<'src, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            EKind::Symbol(symbol) => "variable",
+            EKind::Int(_) => "int",
+            EKind::Bool(_) => "bool",
+            EKind::Nothing => "nothing",
+            EKind::Str(items) => "string",
+            EKind::Call { callee, args } => "function call",
+            EKind::Unary { op, rhs } => "unary operation",
+            EKind::Bin { op, lhs, rhs } => "binary operation",
+            EKind::FieldAccess { lhs, rhs } => "field access",
+            EKind::Index { lhs, rhs } => "array index",
+        };
+        f.write_str(s)
+    }
+}
+
+impl<'src, T> Expr<'src, T> {
+    pub fn new(kind: EKind<'src, T>, ty: T, span: Span<'src>) -> Self {
+        Self { kind, ty, span }
     }
 }
 

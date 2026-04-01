@@ -21,7 +21,11 @@ impl<'src> Lexer<'src> {
         let end = self.position;
         Token {
             kind,
-            span: Span(start, end),
+            span: Span {
+                lo: start,
+                hi: end,
+                src: self.src
+            }
         }
     }
 
@@ -103,13 +107,14 @@ impl<'src> Lexer<'src> {
     // This is done to make the function pointer the same type as the others so it can be used in
     // funky ways :)
     fn read_whitespace(&mut self) -> Option<Token<'src>> {
-        let mut cursor = 0;
-        while let Some(c) = self.rest.get(cursor)
+        let mut length = 0;
+        while let Some(c) = self.rest.get(length)
             && c.is_ascii_whitespace()
         {
-            cursor += 1;
+            length += 1;
         }
-        self.rest = &self.rest[cursor..];
+        self.rest = &self.rest[length..];
+        self.position += length;
         None
     }
 

@@ -38,8 +38,8 @@ impl<'src> Emitter<'src> {
         }
     }
 
-    fn next_label(&mut self, stmt: &SKind<'src, ResolvedType>) -> String {
-        match stmt {
+    fn next_label(&mut self, stmt: &Stmt<'src, ResolvedType>) -> String {
+        match &stmt.kind {
             SKind::While { .. } => {
                 self.loop_label += 1;
                 format!("L{}", self.loop_label)
@@ -57,15 +57,15 @@ impl<'src> Emitter<'src> {
         self.vr_count
     }
 
-    pub fn emit_program(mut self, objs: &[OKind<'src, ResolvedType>]) -> String {
+    pub fn emit_program(mut self, objs: &[Object<'src, ResolvedType>]) -> String {
         for obj in objs {
             self.emit_object(obj);
         }
         self.program
     }
 
-    fn emit_object(&mut self, obj: &OKind<'src, ResolvedType>) {
-        match obj {
+    fn emit_object(&mut self, obj: &Object<'src, ResolvedType>) {
+        match &obj.kind {
             OKind::Fn {
                 name,
                 returns,
@@ -88,8 +88,8 @@ impl<'src> Emitter<'src> {
         }
     }
 
-    fn emit_stmt(&mut self, stmt: &SKind<'src, ResolvedType>) {
-        match stmt {
+    fn emit_stmt(&mut self, stmt: &Stmt<'src, ResolvedType>) {
+        match &stmt.kind {
             SKind::Let { lhs, rhs } => {
                 let target = self.next_vr();
                 if self.symbols.insert(lhs.name, target).is_some() {
@@ -130,7 +130,7 @@ impl<'src> Emitter<'src> {
                 self.emit_raw(&format!("%{target} = int(0)"));
                 self.emit_raw(&format!("beq %{target}, %{cond}, {else_label}"));
                 self.emit_stmt(then_);
-                if let SKind::Block(v) = else_.as_ref()
+                if let SKind::Block(v) = &else_.as_ref().kind
                     && !v.is_empty()
                 {
                     self.emit_raw(&format!("br {end_label}"));
@@ -152,7 +152,7 @@ impl<'src> Emitter<'src> {
         }
     }
 
-    fn emit_expr(&mut self, Expr { kind, ty }: &Expr<'src, ResolvedType>) -> VReg {
+    fn emit_expr(&mut self, Expr { kind, ty, span }: &Expr<'src, ResolvedType>) -> VReg {
         let target;
         let template = match kind {
             EKind::Symbol(symbol) => {
@@ -261,32 +261,5 @@ impl<'src> Emitter<'src> {
         };
         self.emit_raw(&template);
         target
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{lexer::Lexer, parser::Parser, resolver::Resolver, types::*};
-
-    #[test]
-    fn test_emitter() {
-        let src = br#"
-fn main() -> void {
-    let x = 0;
-    if x == 0 {
-        return;
-    }
-}
-"#;
-        println!("Source code:\n{}\n", str::from_utf8(src).unwrap());
-        let lexed: Vec<TKind> = Lexer::new(src).map(|t| t.kind).collect();
-        let parsed = Parser::new(&lexed).parse_program();
-        let resolved = Resolver::new().resolve_program(&parsed);
-        let program = Emitter::new().emit_program(&resolved);
-        // println!("Lexed:\n{:#?}", lexed);
-        // println!("Parsed:\n{:#?}", parsed);
-        // println!("Resolved:\n{:#?}", resolved);
-        println!("Program:\n{}", program);
     }
 }
