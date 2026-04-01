@@ -1,4 +1,7 @@
+fn bob() {}
+
 fn main() {
-  let x = main();
-  return x;
+  let x = &main;
+  x = &bob;
+  (*x)();
 }

@@ -64,7 +64,7 @@ impl<'src> Resolver<'src> {
                 body,
             } => {
                 let Some(resolved_return) = self.resolve_type(returns) else {
-                    panic!("Unknown type {}\n\n{}", returns, obj.span);
+                    panic!("Unknown type {} {}", returns, obj.span);
                 };
                 let mut resolved_args = vec![];
                 let mut scope = HashMap::new();
@@ -135,13 +135,15 @@ impl<'src> Resolver<'src> {
                 span: expr.span,
             },
             EKind::Symbol(x) => {
-                let sym = self
+                let Some(sym) = self
                     .scope_stack
                     .iter()
                     .rev()
                     .find_map(|scope| scope.get(x.name))
-                    .expect(&format!("Variable used but not defined: {}", x.name))
-                    .clone();
+                    .cloned()
+                else {
+                    panic!("Variable used but not defined: {} {}", x.name, expr.span)
+                };
                 Expr {
                     ty: sym.ty.clone(),
                     kind: EKind::Symbol(sym),
@@ -154,7 +156,10 @@ impl<'src> Resolver<'src> {
                     if is_integral(&hint) {
                         ty = hint.clone()
                     } else {
-                        panic!("Integer literal is not of type: {hint}");
+                        panic!(
+                            "Mismatched types. Expected {hint}, found integer type {}",
+                            expr.span
+                        );
                     }
                 }
                 Expr {
@@ -166,7 +171,7 @@ impl<'src> Resolver<'src> {
             EKind::Bool(x) => {
                 if *hint != ResolvedType::Bool {
                     panic!(
-                        "Mismatched types. Expected bool, found {hint}\n\n{}",
+                        "Mismatched types. Expected {hint}, found bool {}",
                         expr.span
                     );
                 };
@@ -180,7 +185,7 @@ impl<'src> Resolver<'src> {
                 if let ResolvedType::Pointer(ty) = hint
                     && **ty != ResolvedType::U8
                 {
-                    panic!("Mismatched types: Lhs = {ty}, Rhs = *u8");
+                    panic!("Mismatched types. Expected {ty}, found *u8 {}", expr.span);
                 }
                 Expr {
                     kind: EKind::Str(x),
@@ -195,14 +200,11 @@ impl<'src> Resolver<'src> {
                     returns,
                 } = &callee.ty
                 else {
-                    panic!(
-                        "Expression does not resolve to a function\n\n{}",
-                        callee.span
-                    );
+                    panic!("Expression does not resolve to a function {}", callee.span);
                 };
                 if args.len() != expected_args.len() {
                     panic!(
-                        "Function takes {} arguments, but {} were given\n\n{}",
+                        "Function takes {} arguments, but {} were given {}",
                         expected_args.len(),
                         args.len(),
                         callee.span,
@@ -232,7 +234,7 @@ impl<'src> Resolver<'src> {
                 UnOp::Negate => {
                     let rhs = self.resolve_expr(rhs, hint);
                     if !is_integral(&rhs.ty) {
-                        panic!("Negation (-) can only be used on literal integral types");
+                        panic!("Negation can only be used on integral types {}", rhs.span);
                     }
                     Expr {
                         ty: rhs.ty.clone(),
@@ -247,8 +249,8 @@ impl<'src> Resolver<'src> {
                     let rhs = self.resolve_expr(rhs, hint);
                     if rhs.ty != ResolvedType::Bool {
                         panic!(
-                            "Attempted to perform logical comparison on non-boolean type: {}",
-                            rhs.ty
+                            "Logical operations can only be used on booleans {}",
+                            rhs.span
                         );
                     }
                     Expr {
@@ -263,7 +265,10 @@ impl<'src> Resolver<'src> {
                 UnOp::AddrOf => {
                     let rhs = self.resolve_expr(rhs, hint);
                     if is_literal(&rhs) {
-                        panic!("Cannot take the address of a literal type {}", rhs.ty);
+                        panic!(
+                            "Cannot take the address of a literal type {} {}",
+                            rhs.ty, rhs.span
+                        );
                     }
                     Expr {
                         ty: ResolvedType::Pointer(Box::new(rhs.ty.clone())),
@@ -277,7 +282,7 @@ impl<'src> Resolver<'src> {
                 UnOp::Deref => {
                     let rhs = self.resolve_expr(rhs, hint);
                     let ResolvedType::Pointer(inner_type) = rhs.ty.clone() else {
-                        panic!("Cannot dereference a literal type {}", rhs.ty);
+                        panic!("Cannot dereference a literal type {} {}", rhs.ty, rhs.span);
                     };
                     Expr {
                         ty: *inner_type,
@@ -294,21 +299,20 @@ impl<'src> Resolver<'src> {
                     let lhs = self.resolve_expr(lhs, hint);
                     let rhs = self.resolve_expr(rhs, &lhs.ty);
                     if lhs.ty != rhs.ty {
-                        panic!("Mismatched types lhs = {}, rhs = {}", lhs.ty, rhs.ty);
+                        panic!("Mismatched types. Expected {}, found {}", lhs.ty, rhs.ty);
                     }
                     let valid_lvalue = match &lhs.kind {
                         EKind::Symbol(symbol) => {
                             !matches!(symbol.ty, ResolvedType::Function { .. })
                         }
                         EKind::Unary {
-                            op: UnOp::Deref,
-                            ..
+                            op: UnOp::Deref, ..
                         } => true,
                         EKind::FieldAccess { .. } => true,
                         _ => false,
                     };
                     if !valid_lvalue {
-                        panic!("Expression is not assignable\n\n{}", lhs.span);
+                        panic!("Expression is not assignable {}", lhs.span);
                     }
                     Expr {
                         ty: rhs.ty.clone(),
@@ -388,7 +392,7 @@ impl<'src> Resolver<'src> {
                     }
                     if rhs.ty != ResolvedType::Bool {
                         panic!(
-                            "Attempted to perform logical comparison on non-boolean type: {}\n\n{}",
+                            "Attempted to perform logical comparison on non-boolean type: {} {}",
                             lhs.ty, expr.span
                         );
                     }
@@ -416,13 +420,19 @@ impl<'src> Resolver<'src> {
         let (kind, terminates) = match &stmt.kind {
             SKind::Let { lhs, rhs } => {
                 let Some(hint) = self.resolve_type(&lhs.ty) else {
-                    panic!("Unknown type {}\n\n{}", lhs.ty, span);
+                    panic!("Unknown type {} {}", lhs.ty, span);
                 };
                 let rhs = self.resolve_expr(rhs, &hint);
+                if let ResolvedType::Function { .. } = rhs.ty {
+                    panic!(
+                        "Cannot bind raw function types to variables. {}\nConsider taking the address of the function instead ",
+                        rhs.span
+                    );
+                };
                 if hint != ResolvedType::Infer && hint != rhs.ty {
                     panic!(
-                        "Mismatched types lhs = {}, rhs = {}\n\n{}",
-                        hint, rhs.ty, span
+                        "Mismatched types. Expected {}, found {} {}",
+                        hint, rhs.ty, rhs.span
                     )
                 }
                 let sym = Symbol {
@@ -439,7 +449,7 @@ impl<'src> Resolver<'src> {
                 let cond = self.resolve_expr(&cond, &ResolvedType::Bool);
                 if cond.ty != ResolvedType::Bool {
                     panic!(
-                        "Loop condition resolves to a non-boolean type: {}\n\n{}",
+                        "Loop condition resolves to a non-boolean type: {} {}",
                         cond.ty, cond.span
                     );
                 }
@@ -457,7 +467,7 @@ impl<'src> Resolver<'src> {
             SKind::Continue => {
                 if self.loop_stack == 0 {
                     panic!(
-                        "'continue' statements can only be called from within loops\n\n{}",
+                        "'continue' statements can only be called from within loops {}",
                         span
                     );
                 }
@@ -466,7 +476,7 @@ impl<'src> Resolver<'src> {
             SKind::Break => {
                 if self.loop_stack == 0 {
                     panic!(
-                        "'break' statements can only be called from within loops\n\n{}",
+                        "'break' statements can only be called from within loops {}",
                         span
                     );
                 }
@@ -476,7 +486,7 @@ impl<'src> Resolver<'src> {
                 let cond = self.resolve_expr(&cond, &ResolvedType::Bool);
                 if cond.ty != ResolvedType::Bool {
                     panic!(
-                        "If condition resolves to a non-boolean type: {}\n\n{}",
+                        "If condition resolves to a non-boolean type: {} {}",
                         cond.ty, cond.span
                     );
                 }
@@ -497,7 +507,7 @@ impl<'src> Resolver<'src> {
                 let expr = self.resolve_expr(&expr, &expected_return_type);
                 if expr.ty != expected_return_type {
                     panic!(
-                        "Function has return type {}, but {} was returned instead\n\n{}",
+                        "Function has return type {}, but {} was returned instead {}",
                         expected_return_type, expr.ty, expr.span
                     );
                 }
@@ -512,7 +522,7 @@ impl<'src> Resolver<'src> {
                     .map(|s| {
                         let (s, t) = self.resolve_stmt(s);
                         if terminates {
-                            panic!("Unreachable code after this statement\n\n{}", last_span);
+                            panic!("Unreachable code after this statement {}", last_span);
                         }
                         last_span = s.span;
                         terminates = t;

@@ -7,12 +7,13 @@ pub struct Token<'src> {
 impl<'src> std::fmt::Display for TKind<'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TKind::Int(x) => f.write_fmt(format_args!("Int literal {}", x)),
+            TKind::Int(x) => f.write_fmt(format_args!("int literal {}", x)),
+            TKind::Bool(x) => f.write_fmt(format_args!("bool literal {}", x)),
             TKind::Str(x) => f.write_fmt(format_args!(
-                "String literal \"{}\"",
+                "string literal \"{}\"",
                 str::from_utf8(x).unwrap()
             )),
-            TKind::Ident(x) => f.write_fmt(format_args!("Identifer \"{}\"", x)),
+            TKind::Ident(x) => f.write_fmt(format_args!("identifer \"{}\"", x)),
             x => f.write_fmt(format_args!("{:?}", x)),
         }
     }
@@ -265,7 +266,7 @@ impl<'src> std::fmt::Display for Span<'src> {
             carets.push_str("...");
         }
 
-        write!(f, "{}\n{}{}", line_text, spaces, carets)
+        write!(f, "\n\n{}\n{}{}", line_text, spaces, carets)
     }
 }
 

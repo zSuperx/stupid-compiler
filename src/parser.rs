@@ -58,7 +58,7 @@ impl<'src> Parser<'src> {
     fn expect(&mut self, kind: TKind<'src>) {
         let next = self.consume();
         if next.kind != kind {
-            panic!("Expected {kind}, found {}\n\n{}", next.kind, next.span);
+            panic!("Expected {kind}, found {} {}", next.kind, next.span);
         }
     }
 
@@ -66,7 +66,7 @@ impl<'src> Parser<'src> {
         let next = self.consume();
         match next.kind {
             TKind::Ident(s) => s,
-            _ => panic!("Expected identifier, found {}\n\n{}", next.kind, next.span),
+            _ => panic!("Expected identifier, found {} {}", next.kind, next.span),
         }
     }
 
@@ -75,7 +75,7 @@ impl<'src> Parser<'src> {
         match next.kind {
             TKind::Str(s) => s,
             _ => panic!(
-                "Expected string literal, found {}\n\n{}",
+                "Expected string literal, found {} {}",
                 next.kind, next.span
             ),
         }
@@ -85,7 +85,7 @@ impl<'src> Parser<'src> {
         let next = self.consume();
         match next.kind {
             TKind::Int(s) => s,
-            _ => panic!("Expected int literal, found {}\n\n{}", next.kind, next.span),
+            _ => panic!("Expected int literal, found {} {}", next.kind, next.span),
         }
     }
 
@@ -97,7 +97,7 @@ impl<'src> Parser<'src> {
                 TKind::Fn => objs.push(self.parse_fn()),
                 TKind::Struct => objs.push(self.parse_struct()),
                 TKind::Global => objs.push(self.parse_global()),
-                x => panic!("Expected function definition, found {x}\n\n{}", tok.span),
+                x => panic!("Expected function definition, found {x} {}", tok.span),
             }
         }
         objs
@@ -183,7 +183,7 @@ impl<'src> Parser<'src> {
                 return RawType::Pointer(Box::new(self.parse_type()));
             }
             TKind::Ident(name) => RawType::Base(name),
-            x => panic!("Expected type, found {x}\n\n{}", tok.span),
+            x => panic!("Expected type, found {x} {}", tok.span),
         };
         self.consume();
         ty
@@ -216,7 +216,7 @@ impl<'src> Parser<'src> {
                 inner.kind
             }
             x => panic!(
-                "Expected start of expression, found \"{x}\"\n\n{}",
+                "Expected start of expression, found \"{x}\" {}",
                 tok.span
             ),
         };
@@ -293,8 +293,8 @@ impl<'src> Parser<'src> {
                 let field = self._parse_expr(op_power);
                 if !matches!(field.kind, EKind::Symbol(_)) {
                     panic!(
-                        "Fields can only be accessed with an identifier, not a {}\n\n{}",
-                        field.kind, field.span
+                        "Fields can only be accessed with an identifier, not a {} {}",
+                        field.kind, field.span,
                     );
                 }
                 EKind::FieldAccess {
@@ -302,7 +302,7 @@ impl<'src> Parser<'src> {
                     rhs: Box::new(field),
                 }
             }
-            x => panic!("Expected infix operator, found {x}\n\n{}", lhs.span),
+            x => panic!("Expected infix operator, found {x} {}", lhs.span),
         };
         self.commit_expr(kind, span_start)
     }
