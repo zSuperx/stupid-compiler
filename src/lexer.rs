@@ -3,7 +3,9 @@ use crate::types::*;
 pub struct Lexer<'src> {
     src: &'src [u8],
     rest: &'src [u8],
-    position: usize,
+    cursor: usize,
+    row: usize,
+    col: usize,
 }
 
 impl<'src> Lexer<'src> {
@@ -11,72 +13,90 @@ impl<'src> Lexer<'src> {
         Self {
             rest: src,
             src,
-            position: 0,
+            cursor: 0,
+            row: 0,
+            col: 0,
         }
     }
 
-    fn make_token(&mut self, kind: TKind<'src>, length: usize) -> Token<'src> {
-        let start = self.position;
-        self.position += length;
-        let end = self.position;
+    fn make_token(&mut self, kind: TKind<'src>, lo: usize) -> Token<'src> {
+        let hi = self.cursor;
         Token {
             kind,
             span: Span {
-                lo: start,
-                hi: end,
-                src: self.src
-            }
+                lo,
+                hi,
+                src: self.src,
+                row: self.row,
+                col: self.col,
+            },
         }
     }
 
+    fn consume(&mut self) -> Option<u8> {
+        self.cursor += 1;
+        match self.rest.get(self.cursor - 1).copied() {
+            Some(c) => {
+                if c == b'\n' {
+                    self.row += 1;
+                    self.col = 0;
+                } else {
+                    self.col += 1;
+                }
+                Some(c)
+            }
+            None => None,
+        }
+    }
+
+    fn peek(&mut self) -> Option<u8> {
+        self.rest.get(self.cursor).copied()
+    }
+
     fn read_num(&mut self) -> Option<Token<'src>> {
+        let start = self.cursor;
         let mut buf = vec![];
-        let mut cursor = 0;
 
         // Make sure the number starts with a digit
-        let first = *self.rest.get(cursor)?;
+        let first = self.peek()?;
         if !first.is_ascii_digit() {
             return None;
         }
 
         // Now read all digits and underscores
-        while let Some(c) = self.rest.get(cursor)
-            && b"0123456789_".contains(c)
+        while let Some(c) = self.peek()
+            && b"0123456789_".contains(&c)
         {
-            if *c != b'_' {
-                buf.push(*c);
+            let c = self.consume()?;
+            if c != b'_' {
+                buf.push(c);
             }
-            cursor += 1;
         }
 
         let kind = str::from_utf8(&buf)
             .map(|s| s.parse().expect("LEXER: Integer literal too large"))
             .ok()
             .map(TKind::Int)?;
-
-        // How far did we traverse to complete this token?
-        let length = cursor;
         // On a successful parse, advance the cursor
-        self.rest = &self.rest[cursor..];
-        Some(self.make_token(kind, length))
+        Some(self.make_token(kind, start))
     }
 
     // This returns either an Ident or a Keyword, depending on what the string equates to
     fn read_word(&mut self) -> Option<Token<'src>> {
-        let mut cursor = 0;
+        let start = self.cursor;
         // Identifiers can only start with letters or underscores
-        let first = *self.rest.get(cursor)?;
+        let first = self.peek()?;
         if !(first.is_ascii_alphabetic() || first == b'_') {
             return None;
         }
 
-        while let Some(c) = self.rest.get(cursor)
-            && (c.is_ascii_alphanumeric() || *c == b'_')
+        while let Some(c) = self.peek()
+            && (c.is_ascii_alphanumeric() || c == b'_')
         {
-            cursor += 1;
+            self.consume()?;
         }
 
-        let s = str::from_utf8(self.rest.get(0..cursor)?)
+        let s = str::from_utf8(self.rest.get(start..self.cursor)?)
             .expect("LEXER: Non-utf8 characters are not supported");
 
         let kind = match s {
@@ -94,84 +114,73 @@ impl<'src> Lexer<'src> {
             "false" => TKind::Bool(false),
             _ => TKind::Ident(s),
         };
-
-        // How far did we traverse to complete this token?
-        let length = cursor;
-        // On a successful parse, advance the cursor
-        self.rest = &self.rest[cursor..];
-
-        Some(self.make_token(kind, length))
+        Some(self.make_token(kind, start))
     }
 
     // This reader will always return None, but a "successful" read will advance the cursor.
     // This is done to make the function pointer the same type as the others so it can be used in
     // funky ways :)
     fn read_whitespace(&mut self) -> Option<Token<'src>> {
-        let mut length = 0;
-        while let Some(c) = self.rest.get(length)
+        while let Some(c) = self.peek()
             && c.is_ascii_whitespace()
         {
-            length += 1;
+            self.consume()?;
         }
-        self.rest = &self.rest[length..];
-        self.position += length;
         None
     }
 
     fn read_strlit(&mut self) -> Option<Token<'src>> {
-        let mut cursor = 0;
-        let first = *self.rest.get(cursor)?;
-        if first == b'"' {
-            cursor += 1;
+        let start = self.cursor;
+        if self.peek()? == b'"' {
+            self.consume();
         } else {
             return None;
         }
 
         loop {
-            let curr = *self.rest.get(cursor).expect("LEXER: Unclosed quote");
-            cursor += 1;
-
+            let curr = self.consume().expect("LEXER: Unclosed quote");
             match curr {
                 b'"' => break,
                 b'\\' => {
-                    cursor += 1;
+                    self.consume().expect("LEXER: Unclosed quote");
                 }
                 _ => {}
             }
         }
 
         // +1/-1 to disclude the surrounding "..."
-        let kind = TKind::Str(self.rest.get(0..cursor)?);
-        let length = cursor;
-        self.rest = &self.rest[cursor..];
-        Some(self.make_token(kind, length))
+        let kind = TKind::Str(self.rest.get(start + 1..self.cursor - 1)?);
+        Some(self.make_token(kind, start))
     }
 
     fn read_punct(&mut self) -> Option<Token<'src>> {
+        let start = self.cursor;
         let known_punctuators = &["==", "!=", "<=", ">=", "->", "&&", "||", "<<", ">>"];
 
-        let mut length = 0;
-        let mut found_long_punct = false;
-        let src = self.rest.get(0..)?;
+        let mut length = 1;
+        let src = self.rest.get(start..)?;
         for p in known_punctuators {
             if src.starts_with(p.as_bytes()) {
                 length = p.len();
-                found_long_punct = true;
                 break;
             }
         }
 
-        let first = *src.first()?;
+        let first = self.peek()?;
 
-        if !found_long_punct {
-            if !(first.is_ascii_punctuation() && first != b'_') {
+        if length == 1 {
+            if !first.is_ascii_punctuation() || first == b'_' {
                 return None;
             }
-            length = 1;
         }
 
+        let s = (0..length)
+            .map(|_| self.consume())
+            .flatten()
+            .collect::<Vec<_>>();
+
         use TKind::*;
-        let kind = match src.get(0..length)? {
+        let kind = match s.as_slice() {
             // Delimiters
             b"(" => LParen,
             b")" => RParen,
@@ -208,8 +217,7 @@ impl<'src> Lexer<'src> {
             x => panic!("Unknown token: \"{}\"", str::from_utf8(x).unwrap()),
         };
 
-        self.rest = &self.rest[length..];
-        Some(self.make_token(kind, length))
+        Some(self.make_token(kind, start))
     }
 }
 

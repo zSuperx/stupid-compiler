@@ -1,10 +1,10 @@
-use crate::{emitter::Emitter, lexer::Lexer, parser::Parser, resolver::Resolver, types::TKind};
+use crate::{emitter::Emitter, lexer::Lexer, parser::Parser, resolver::Resolver};
 
+mod emitter;
 mod lexer;
 mod parser;
-mod types;
 mod resolver;
-mod emitter;
+mod types;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -17,7 +17,7 @@ fn main() {
     let file = &args[1];
     let content = std::fs::read(file).unwrap();
 
-    let lexed = Lexer::new(&content).filter(|t| t.kind != TKind::Whitespace).collect::<Vec<_>>();
+    let lexed = Lexer::new(&content).collect::<Vec<_>>();
     // println!("{lexed:#?}");
     let parsed = Parser::new(&lexed).parse_program();
     // println!("{parsed:#?}");

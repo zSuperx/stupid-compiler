@@ -12,6 +12,120 @@ pub struct Emitter<'src> {
 
 type VReg = usize;
 
+enum Ir {
+    /* FUNCTIONS */
+    /// get dst, index
+    GetParam(VReg, u8),
+    /// set src, index
+    SetParam(VReg, u8),
+    /// call dst, NAME
+    Call(VReg, String),
+    /// icall dst, src
+    Icall(VReg, VReg),
+    /// ret (src)
+    Ret(Option<VReg>),
+
+    /* DATA */
+    /// imm dst, width, imm
+    Imm(VReg, u8, u64),
+    /// addr dst, index
+    Addr(VReg, u64),
+    /// load dst, width, src
+    Load(VReg, u8, VReg),
+    /// store src2, width, src1
+    Store(VReg, u8, VReg),
+
+    /* ARITHMETIC */
+    /// add, dst, src1, src2
+    Add(VReg, VReg, VReg),
+    /// Sub, dst, src1, src2
+    Sub(VReg, VReg, VReg),
+    /// Mul, dst, src1, src2
+    Mul(VReg, VReg, VReg),
+    /// Sdiv, dst, src1, src2
+    Sdiv(VReg, VReg, VReg),
+    /// udiv, dst, src1, src2
+    Udiv(VReg, VReg, VReg),
+
+    /* ORDERING */
+    /// sgt dst, src1, src2
+    Sgt(VReg, VReg, VReg),
+    /// sge dst, src1, src2
+    Sge(VReg, VReg, VReg),
+    /// ugt dst, src1, src2
+    Ugt(VReg, VReg, VReg),
+    /// uge dst, src1, src2
+    Uge(VReg, VReg, VReg),
+    /// slt dst, src1, src2
+    Slt(VReg, VReg, VReg),
+    /// sle dst, src1, src2
+    Sle(VReg, VReg, VReg),
+    /// ult dst, src1, src2
+    Ult(VReg, VReg, VReg),
+    /// ule dst, src1, src2
+    Ule(VReg, VReg, VReg),
+
+    /* EQUALITY */
+    /// eq dst, src1, src2
+    Eq(VReg, VReg, VReg),
+    /// ne dst, src1, src2
+    Ne(VReg, VReg, VReg),
+
+    /* LOGIC */
+    /// and dst, src1, src2
+    And(VReg, VReg, VReg),
+    /// or dst, src1, src2
+    Or(VReg, VReg, VReg),
+    /// xor dst, src1, src2
+    Xor(VReg, VReg, VReg),
+
+    /* CONTROL FLOW */
+    /// beq src1, src2, LABEL
+    Beq(VReg, VReg, String),
+    /// bne src1, src2, LABEL
+    Bne(VReg, VReg, String),
+    Br(String),
+}
+
+impl std::fmt::Display for Ir {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[rustfmt::skip]
+        let s = match self {
+            Ir::GetParam(dst, index)     => format!("getp %{dst}, {index}"),
+            Ir::SetParam(src, index)     => format!("setp %{src}, {index}"),
+            Ir::Call(dst, name)          => format!("call %{dst}, {name}"),
+            Ir::Icall(dst, src)          => format!("icall %{dst}, %{src}"),
+            Ir::Ret(src)                 => format!("ret {}", src.map(|r| format!("%{r}")).unwrap_or("".to_string())),
+            Ir::Imm(dst, width, imm)     => format!("imm %{dst}, {width}, {imm}"),
+            Ir::Addr(dst, index)         => format!("addr %{dst}, {index}"),
+            Ir::Load(dst, width, src)    => format!("load %{dst}, {width}, %{src}"),
+            Ir::Store(src2, width, src1) => format!("store %{src1}, {width}, %{src2}"),
+            Ir::Add(dst, src1, src2)     => format!("add %{dst}, %{src1}, %{src2}"),
+            Ir::Sub(dst, src1, src2)     => format!("sub %{dst}, %{src1}, %{src2}"),
+            Ir::Mul(dst, src1, src2)     => format!("mul %{dst}, %{src1}, %{src2}"),
+            Ir::Sdiv(dst, src1, src2)    => format!("sdiv %{dst}, %{src1}, %{src2}"),
+            Ir::Udiv(dst, src1, src2)    => format!("udiv %{dst}, %{src1}, %{src2}"),
+            Ir::Sgt(dst, src1, src2)     => format!("sgt %{dst}, %{src1}, %{src2}"),
+            Ir::Sge(dst, src1, src2)     => format!("sge %{dst}, %{src1}, %{src2}"),
+            Ir::Ugt(dst, src1, src2)     => format!("ugt %{dst}, %{src1}, %{src2}"),
+            Ir::Uge(dst, src1, src2)     => format!("uge %{dst}, %{src1}, %{src2}"),
+            Ir::Slt(dst, src1, src2)     => format!("slt %{dst}, %{src1}, %{src2}"),
+            Ir::Sle(dst, src1, src2)     => format!("sle %{dst}, %{src1}, %{src2}"),
+            Ir::Ult(dst, src1, src2)     => format!("ult %{dst}, %{src1}, %{src2}"),
+            Ir::Ule(dst, src1, src2)     => format!("ule %{dst}, %{src1}, %{src2}"),
+            Ir::Eq(dst, src1, src2)      => format!("eq %{dst}, %{src1}, %{src2}"),
+            Ir::Ne(dst, src1, src2)      => format!("ne %{dst}, %{src1}, %{src2}"),
+            Ir::And(dst, src1, src2)     => format!("and %{dst}, %{src1}, %{src2}"),
+            Ir::Or(dst, src1, src2)      => format!("or %{dst}, %{src1}, %{src2}"),
+            Ir::Xor(dst, src1, src2)     => format!("xor %{dst}, %{src1}, %{src2}"),
+            Ir::Beq(src1, src2, label)   => format!("beq %{src1}, %{src2}, {label}"),
+            Ir::Bne(src1, src2, label)   => format!("bne %{src1}, %{src2}, {label}"),
+            Ir::Br(label)                => format!("br {label}"),
+        };
+        f.write_str(&s)
+    }
+}
+
 impl<'src> Emitter<'src> {
     pub fn new() -> Self {
         Self {
@@ -35,7 +149,7 @@ impl<'src> Emitter<'src> {
         }
     }
 
-    fn next_label(&mut self, stmt: &Stmt<'src, ResolvedType>) -> String {
+    fn next_label(&mut self, stmt: &Stmt<'src, Resolved>) -> String {
         match &stmt.kind {
             SKind::While { .. } => {
                 self.loop_label += 1;
@@ -54,14 +168,14 @@ impl<'src> Emitter<'src> {
         self.vr_count
     }
 
-    pub fn emit_program(mut self, objs: &[Object<'src, ResolvedType>]) -> Vec<String> {
+    pub fn emit_program(mut self, objs: &[Object<'src, Resolved>]) -> Vec<String> {
         for obj in objs {
             self.emit_object(obj);
         }
         self.program
     }
 
-    fn emit_object(&mut self, obj: &Object<'src, ResolvedType>) {
+    fn emit_object(&mut self, obj: &Object<'src, Resolved>) {
         match &obj.kind {
             OKind::Fn {
                 name,
@@ -69,6 +183,7 @@ impl<'src> Emitter<'src> {
                 args,
                 body,
             } => {
+                // START FUNCTION
                 let label = format!("Fn_{name}");
                 self.emit_label(&label);
                 self.symbols.clear();
@@ -79,26 +194,31 @@ impl<'src> Emitter<'src> {
                     self.symbols.insert(arg.name, target);
                 }
                 self.emit_stmt(body);
-                if *returns == ResolvedType::Void
-                    && !self.program.last().unwrap().contains("\tret\n")
-                {
+                // END FUNCTION
+                if *returns == Resolved::Void && !self.program.last().unwrap().contains("\tret\n") {
                     self.emit_raw("ret");
                 }
+                self.emit_label(&format!("FnEnd_{name}"));
             }
             OKind::Global { .. } => todo!(),
             OKind::Struct { .. } => todo!(),
         }
     }
 
-    fn emit_stmt(&mut self, stmt: &Stmt<'src, ResolvedType>) {
+    fn emit_stmt(&mut self, stmt: &Stmt<'src, Resolved>) {
         match &stmt.kind {
             SKind::Let { lhs, rhs } => {
                 let target = self.next_vr();
                 if self.symbols.insert(lhs.name, target).is_some() {
                     panic!("Duplicate symbol {:?}", lhs);
                 }
-                let rhs = self.emit_expr(rhs);
-                let program = format!("%{target} = %{}", rhs);
+                self.emit_raw(&format!(
+                    "%{target} = local({}, \"{}\")",
+                    lhs.ty.width(),
+                    lhs.name
+                ));
+                let rhs_vr = self.emit_expr(rhs);
+                let program = format!("%{target} = %{}", rhs_vr);
                 self.emit_raw(&program);
             }
             SKind::While { cond, body } => {
@@ -107,7 +227,7 @@ impl<'src> Emitter<'src> {
                 let end_label = label + "_end";
                 let cond = self.emit_expr(cond);
                 let target = self.next_vr();
-                self.emit_raw(&format!("%{target} = int(0)"));
+                self.emit_raw(&format!("%{target} = int({}, 0)", Resolved::Bool.width()));
                 self.emit_raw(&format!("bne %{target}, %{cond}, {end_label}"));
                 self.emit_label(&start_label);
                 self.emit_stmt(body);
@@ -129,7 +249,7 @@ impl<'src> Emitter<'src> {
                 let else_label = label.clone() + "_else";
                 let end_label = label + "_end";
                 let target = self.next_vr();
-                self.emit_raw(&format!("%{target} = int(0)"));
+                self.emit_raw(&format!("%{target} = int({}, 0)", Resolved::Bool.width()));
                 self.emit_raw(&format!("beq %{target}, %{cond}, {else_label}"));
                 self.emit_stmt(then_);
                 if let SKind::Block(v) = &else_.as_ref().kind
@@ -142,7 +262,7 @@ impl<'src> Emitter<'src> {
                 self.emit_label(&end_label);
             }
             SKind::Return(expr) => {
-                if expr.ty != ResolvedType::Void {
+                if expr.ty != Resolved::Void {
                     let ret = self.emit_expr(expr);
                     self.emit_raw(&format!("ret %{ret}"));
                 } else {
@@ -158,7 +278,7 @@ impl<'src> Emitter<'src> {
         }
     }
 
-    fn emit_expr(&mut self, Expr { kind, .. }: &Expr<'src, ResolvedType>) -> VReg {
+    fn emit_expr(&mut self, Expr { kind, ty, .. }: &Expr<'src, Resolved>) -> VReg {
         let target;
         let template = match kind {
             EKind::Symbol(symbol) => {
@@ -167,11 +287,11 @@ impl<'src> Emitter<'src> {
             }
             EKind::Int(x) => {
                 target = self.next_vr();
-                format!("%{target} = int({x})")
+                format!("%{target} = int({}, {x})", ty.width())
             }
             EKind::Bool(x) => {
                 target = self.next_vr();
-                format!("%{target} = int({})", *x as u8)
+                format!("%{target} = int(u32, {})", *x as u8)
             }
             EKind::Nothing => {
                 target = self.vr_count;
@@ -202,19 +322,19 @@ impl<'src> Emitter<'src> {
             }
             EKind::Unary { op, rhs } => match op {
                 UnOp::Negate => {
-                    let rhs = self.emit_expr(rhs);
+                    let rhs_vr = self.emit_expr(rhs);
                     target = self.next_vr();
-                    format!("%{target} = neg %{rhs}")
+                    format!("%{target} = neg %{rhs_vr}")
                 }
                 UnOp::Not => {
-                    let rhs = self.emit_expr(rhs);
+                    let rhs_vr = self.emit_expr(rhs);
                     target = self.next_vr();
-                    format!("%{target} = xor %{rhs}, 1")
+                    format!("%{target} = xor %{rhs_vr}, 1")
                 }
                 UnOp::Deref => {
-                    let rhs = self.emit_expr(rhs);
+                    let rhs_vr = self.emit_expr(rhs);
                     target = self.next_vr();
-                    format!("%{target} = load %{rhs}")
+                    format!("%{target} = load %{rhs_vr}")
                 }
                 UnOp::AddrOf => {
                     target = self.next_vr();
@@ -231,35 +351,37 @@ impl<'src> Emitter<'src> {
                         rhs: lrhs, // Left right hand side (deref's inner)
                     } => {
                         target = self.emit_expr(lrhs); // This will be derived from AddrOf
-                        let rhs = self.emit_expr(rhs);
-                        format!("store %{target}, %{rhs}")
+                        let rhs_vr = self.emit_expr(rhs);
+                        format!("store %{target}, %{rhs_vr}")
                     }
                     _ => {
                         target = self.emit_expr(lhs);
-                        let rhs = self.emit_expr(rhs);
-                        format!("%{target} = %{}", rhs)
+                        let rhs_vr = self.emit_expr(rhs);
+                        format!("%{target} = %{rhs_vr}")
                     }
                 },
                 op => {
-                    let lhs = self.emit_expr(lhs);
-                    let rhs = self.emit_expr(rhs);
+                    let lhs_vr = self.emit_expr(lhs);
+                    let rhs_vr = self.emit_expr(rhs);
+                    #[rustfmt::skip]
                     let op_str = match op {
-                        BinOp::Add => "add",
-                        BinOp::Sub => "sub",
-                        BinOp::Mul => "mul",
-                        BinOp::Div => "div",
-                        BinOp::LogOr => "or",
+                        BinOp::LogOr  => "or",
                         BinOp::LogAnd => "and",
-                        BinOp::Gt => "gt",
-                        BinOp::Ge => "ge",
-                        BinOp::Lt => "lt",
-                        BinOp::Le => "le",
-                        BinOp::Eq => "eq",
-                        BinOp::Ne => "ne",
+                        BinOp::Add    => "add",
+                        BinOp::Sub    => "sub",
+                        BinOp::Mul    => "mul",
+                        BinOp::Eq     => "eq",
+                        BinOp::Ne     => "ne",
+                        // The following instructions have unsigned counterparts
+                        BinOp::Div => if lhs.ty.signed() { "sdiv" } else { "udiv" }
+                        BinOp::Gt  => if lhs.ty.signed() { "sgt"  } else { "ugt"  }
+                        BinOp::Ge  => if lhs.ty.signed() { "sge"  } else { "uge"  }
+                        BinOp::Lt  => if lhs.ty.signed() { "slt"  } else { "ult"  }
+                        BinOp::Le  => if lhs.ty.signed() { "sle"  } else { "ule"  }
                         _ => unreachable!(),
                     };
                     target = self.next_vr();
-                    format!("%{target} = {op_str} %{}, %{}", lhs, rhs)
+                    format!("%{target} = {op_str} %{}, %{}", lhs_vr, rhs_vr)
                 }
             },
             EKind::FieldAccess { .. } => todo!(),

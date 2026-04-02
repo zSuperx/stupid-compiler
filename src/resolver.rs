@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use crate::types::*;
 
 pub struct Resolver<'src> {
-    types: HashMap<&'src str, ResolvedType>,
-    scope_stack: Vec<HashMap<&'src str, Symbol<'src, ResolvedType>>>,
-    return_type_stack: Vec<ResolvedType>,
+    types: HashMap<&'src str, Resolved>,
+    scope_stack: Vec<HashMap<&'src str, Symbol<'src, Resolved>>>,
+    return_stack: Vec<Resolved>,
     loop_stack: usize,
 }
 
@@ -13,7 +13,7 @@ pub type Terminates = bool;
 
 impl<'src> Resolver<'src> {
     pub fn new() -> Self {
-        use ResolvedType::*;
+        use Resolved::*;
         let types = HashMap::from([
             ("u8", U8),
             ("u16", U16),
@@ -30,32 +30,29 @@ impl<'src> Resolver<'src> {
         Self {
             types,
             scope_stack: vec![HashMap::new()],
-            return_type_stack: vec![],
+            return_stack: vec![],
             loop_stack: 0,
         }
     }
 
     pub fn resolve_program(
         &mut self,
-        objs: &[Object<'src, RawType<'src>>],
-    ) -> Vec<Object<'src, ResolvedType>> {
+        objs: &[Object<'src, Raw<'src>>],
+    ) -> Vec<Object<'src, Resolved>> {
         objs.iter().map(|o| self.resolve_object(o)).collect()
     }
 
-    fn resolve_type(&mut self, ty: &RawType<'src>) -> Option<ResolvedType> {
+    fn resolve_type(&mut self, ty: &Raw<'src>) -> Option<Resolved> {
         match ty {
-            RawType::Unknown => Some(ResolvedType::Infer),
-            RawType::Base(x) => self.types.get(x).cloned(),
-            RawType::Pointer(raw_type) => self
+            Raw::Infer => Some(Resolved::Infer),
+            Raw::Base(x) => self.types.get(x).cloned(),
+            Raw::Pointer(raw_type) => self
                 .resolve_type(raw_type)
-                .map(|t| ResolvedType::Pointer(Box::new(t))),
+                .map(|t| Resolved::Pointer(Box::new(t))),
         }
     }
 
-    pub fn resolve_object(
-        &mut self,
-        obj: &Object<'src, RawType<'src>>,
-    ) -> Object<'src, ResolvedType> {
+    pub fn resolve_object(&mut self, obj: &Object<'src, Raw<'src>>) -> Object<'src, Resolved> {
         let kind = match &obj.kind {
             OKind::Fn {
                 name,
@@ -85,7 +82,7 @@ impl<'src> Resolver<'src> {
 
                 let fn_sym = Symbol {
                     name,
-                    ty: ResolvedType::Function {
+                    ty: Resolved::Function {
                         args: resolved_args.iter().map(|arg| arg.ty.clone()).collect(),
                         returns: Box::new(resolved_return.clone()),
                     },
@@ -95,17 +92,17 @@ impl<'src> Resolver<'src> {
                     panic!(r#"Function "{name}" already defined"#);
                 }
 
-                self.return_type_stack.push(resolved_return.clone());
+                self.return_stack.push(resolved_return.clone());
                 self.scope_stack.push(scope);
                 let (resolved_body, terminates) = self.resolve_stmt(body);
-                if !terminates && resolved_return != ResolvedType::Void {
+                if !terminates && resolved_return != Resolved::Void {
                     panic!(
-                        "Function {} expects return type {}, but not all paths return a value",
-                        name, resolved_return
+                        "Function {} expects return type {}, but not all paths return a value {}",
+                        name, resolved_return, obj.span
                     );
                 }
                 self.scope_stack.pop();
-                self.return_type_stack.pop();
+                self.return_stack.pop();
                 OKind::Fn {
                     name,
                     returns: resolved_return,
@@ -125,12 +122,12 @@ impl<'src> Resolver<'src> {
 
     pub fn resolve_expr(
         &mut self,
-        expr: &Expr<'src, RawType<'src>>,
-        hint: &ResolvedType,
-    ) -> Expr<'src, ResolvedType> {
+        expr: &Expr<'src, Raw<'src>>,
+        hint: &Resolved,
+    ) -> Expr<'src, Resolved> {
         match &expr.kind {
             EKind::Nothing => Expr {
-                ty: ResolvedType::Void,
+                ty: Resolved::Void,
                 kind: EKind::Nothing,
                 span: expr.span,
             },
@@ -151,8 +148,8 @@ impl<'src> Resolver<'src> {
                 }
             }
             EKind::Int(x) => {
-                let mut ty = ResolvedType::I32;
-                if *hint != ResolvedType::Infer {
+                let mut ty = Resolved::I32;
+                if *hint != Resolved::Infer {
                     if is_integral(&hint) {
                         ty = hint.clone()
                     } else {
@@ -169,7 +166,7 @@ impl<'src> Resolver<'src> {
                 }
             }
             EKind::Bool(x) => {
-                if *hint != ResolvedType::Bool {
+                if *hint != Resolved::Bool {
                     panic!(
                         "Mismatched types. Expected {hint}, found bool {}",
                         expr.span
@@ -177,25 +174,25 @@ impl<'src> Resolver<'src> {
                 };
                 Expr {
                     kind: EKind::Bool(*x),
-                    ty: ResolvedType::Bool,
+                    ty: Resolved::Bool,
                     span: expr.span,
                 }
             }
             EKind::Str(x) => {
-                if let ResolvedType::Pointer(ty) = hint
-                    && **ty != ResolvedType::U8
+                if let Resolved::Pointer(ty) = hint
+                    && **ty != Resolved::U8
                 {
                     panic!("Mismatched types. Expected {ty}, found *u8 {}", expr.span);
                 }
                 Expr {
                     kind: EKind::Str(x),
-                    ty: ResolvedType::Pointer(Box::new(ResolvedType::U8)),
+                    ty: Resolved::Pointer(Box::new(Resolved::U8)),
                     span: expr.span,
                 }
             }
             EKind::Call { callee, args } => {
                 let callee = self.resolve_expr(callee, hint);
-                let ResolvedType::Function {
+                let Resolved::Function {
                     args: expected_args,
                     returns,
                 } = &callee.ty
@@ -216,7 +213,10 @@ impl<'src> Resolver<'src> {
                     .map(|(a, e)| {
                         let r = self.resolve_expr(a, e);
                         if r.ty != *e {
-                            panic!("Mismatched types. Expected {} but got {}", e, r.ty);
+                            panic!(
+                                "Mismatched types. Expected {} but got {} {}",
+                                e, r.ty, r.span
+                            );
                         }
                         r
                     })
@@ -247,7 +247,7 @@ impl<'src> Resolver<'src> {
                 }
                 UnOp::Not => {
                     let rhs = self.resolve_expr(rhs, hint);
-                    if rhs.ty != ResolvedType::Bool {
+                    if rhs.ty != Resolved::Bool {
                         panic!(
                             "Logical operations can only be used on booleans {}",
                             rhs.span
@@ -271,7 +271,7 @@ impl<'src> Resolver<'src> {
                         );
                     }
                     Expr {
-                        ty: ResolvedType::Pointer(Box::new(rhs.ty.clone())),
+                        ty: Resolved::Pointer(Box::new(rhs.ty.clone())),
                         kind: EKind::Unary {
                             op: UnOp::AddrOf,
                             rhs: Box::new(rhs),
@@ -281,7 +281,7 @@ impl<'src> Resolver<'src> {
                 }
                 UnOp::Deref => {
                     let rhs = self.resolve_expr(rhs, hint);
-                    let ResolvedType::Pointer(inner_type) = rhs.ty.clone() else {
+                    let Resolved::Pointer(inner_type) = rhs.ty.clone() else {
                         panic!("Cannot dereference a literal type {} {}", rhs.ty, rhs.span);
                     };
                     Expr {
@@ -298,13 +298,14 @@ impl<'src> Resolver<'src> {
                 BinOp::Assign => {
                     let lhs = self.resolve_expr(lhs, hint);
                     let rhs = self.resolve_expr(rhs, &lhs.ty);
+                    if rhs.ty == Resolved::Infer {
+                        panic!("Variable may be used uninitialized {}", lhs.span);
+                    }
                     if lhs.ty != rhs.ty {
                         panic!("Mismatched types. Expected {}, found {}", lhs.ty, rhs.ty);
                     }
                     let valid_lvalue = match &lhs.kind {
-                        EKind::Symbol(symbol) => {
-                            !matches!(symbol.ty, ResolvedType::Function { .. })
-                        }
+                        EKind::Symbol(symbol) => !matches!(symbol.ty, Resolved::Function { .. }),
                         EKind::Unary {
                             op: UnOp::Deref, ..
                         } => true,
@@ -359,7 +360,7 @@ impl<'src> Resolver<'src> {
                         );
                     }
                     Expr {
-                        ty: ResolvedType::Bool,
+                        ty: Resolved::Bool,
                         kind: EKind::Bin {
                             op: *op,
                             lhs: Box::new(lhs),
@@ -375,7 +376,7 @@ impl<'src> Resolver<'src> {
                         panic!("Mismatched types lhs = {}, rhs = {}", lhs.ty, rhs.ty);
                     }
                     Expr {
-                        ty: ResolvedType::Bool,
+                        ty: Resolved::Bool,
                         kind: EKind::Bin {
                             op: *op,
                             lhs: Box::new(lhs),
@@ -390,14 +391,14 @@ impl<'src> Resolver<'src> {
                     if lhs.ty != rhs.ty {
                         panic!("Mismatched types lhs = {}, rhs = {}", lhs.ty, rhs.ty);
                     }
-                    if rhs.ty != ResolvedType::Bool {
+                    if rhs.ty != Resolved::Bool {
                         panic!(
                             "Attempted to perform logical comparison on non-boolean type: {} {}",
                             lhs.ty, expr.span
                         );
                     }
                     Expr {
-                        ty: ResolvedType::Bool,
+                        ty: Resolved::Bool,
                         kind: EKind::Bin {
                             op: *op,
                             lhs: Box::new(lhs),
@@ -412,10 +413,7 @@ impl<'src> Resolver<'src> {
         }
     }
 
-    fn resolve_stmt(
-        &mut self,
-        stmt: &Stmt<'src, RawType<'src>>,
-    ) -> (Stmt<'src, ResolvedType>, Terminates) {
+    fn resolve_stmt(&mut self, stmt: &Stmt<'src, Raw<'src>>) -> (Stmt<'src, Resolved>, Terminates) {
         let span = stmt.span;
         let (kind, terminates) = match &stmt.kind {
             SKind::Let { lhs, rhs } => {
@@ -423,13 +421,13 @@ impl<'src> Resolver<'src> {
                     panic!("Unknown type {} {}", lhs.ty, span);
                 };
                 let rhs = self.resolve_expr(rhs, &hint);
-                if let ResolvedType::Function { .. } = rhs.ty {
+                if let Resolved::Function { .. } = rhs.ty {
                     panic!(
                         "Cannot bind raw function types to variables. {}\nConsider taking the address of the function instead ",
                         rhs.span
                     );
                 };
-                if hint != ResolvedType::Infer && hint != rhs.ty {
+                if hint != Resolved::Infer && hint != rhs.ty {
                     panic!(
                         "Mismatched types. Expected {}, found {} {}",
                         hint, rhs.ty, rhs.span
@@ -446,8 +444,8 @@ impl<'src> Resolver<'src> {
                 (SKind::Let { lhs: sym, rhs }, false)
             }
             SKind::While { cond, body } => {
-                let cond = self.resolve_expr(&cond, &ResolvedType::Bool);
-                if cond.ty != ResolvedType::Bool {
+                let cond = self.resolve_expr(&cond, &Resolved::Bool);
+                if cond.ty != Resolved::Bool {
                     panic!(
                         "Loop condition resolves to a non-boolean type: {} {}",
                         cond.ty, cond.span
@@ -483,8 +481,8 @@ impl<'src> Resolver<'src> {
                 (SKind::Break, true)
             }
             SKind::If { cond, then_, else_ } => {
-                let cond = self.resolve_expr(&cond, &ResolvedType::Bool);
-                if cond.ty != ResolvedType::Bool {
+                let cond = self.resolve_expr(&cond, &Resolved::Bool);
+                if cond.ty != Resolved::Bool {
                     panic!(
                         "If condition resolves to a non-boolean type: {} {}",
                         cond.ty, cond.span
@@ -503,7 +501,7 @@ impl<'src> Resolver<'src> {
                 )
             }
             SKind::Return(expr) => {
-                let expected_return_type = self.return_type_stack.last().unwrap().clone();
+                let expected_return_type = self.return_stack.last().unwrap().clone();
                 let expr = self.resolve_expr(&expr, &expected_return_type);
                 if expr.ty != expected_return_type {
                     panic!(
@@ -533,7 +531,7 @@ impl<'src> Resolver<'src> {
                 (SKind::Block(stmts), terminates)
             }
             SKind::Expr(expr) => (
-                SKind::Expr(self.resolve_expr(&expr, &ResolvedType::Void)),
+                SKind::Expr(self.resolve_expr(&expr, &Resolved::Void)),
                 false,
             ),
         };
@@ -541,8 +539,8 @@ impl<'src> Resolver<'src> {
     }
 }
 
-fn is_integral(ty: &ResolvedType) -> bool {
-    use ResolvedType::*;
+fn is_integral(ty: &Resolved) -> bool {
+    use Resolved::*;
     matches!(ty, U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64)
 }
 

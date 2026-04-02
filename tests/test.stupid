@@ -1,7 +1,0 @@
-fn bob() {}
-
-fn main() {
-  let x = &main;
-  x = &bob;
-  (*x)();
-}

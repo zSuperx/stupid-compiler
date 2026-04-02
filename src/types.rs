@@ -23,7 +23,6 @@ impl<'src> std::fmt::Display for TKind<'src> {
 pub enum TKind<'src> {
     #[default]
     Eof,
-    Whitespace,
     Int(u64),
     Bool(bool),
     Str(&'src [u8]),
@@ -110,14 +109,14 @@ pub struct Object<'src, T> {
 }
 
 #[derive(Debug, Clone)]
-pub enum RawType<'src> {
-    Unknown,
+pub enum Raw<'src> {
+    Infer,
     Base(&'src str),
-    Pointer(Box<RawType<'src>>),
+    Pointer(Box<Raw<'src>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ResolvedType {
+pub enum Resolved {
     Infer,
 
     U8,
@@ -132,11 +131,12 @@ pub enum ResolvedType {
     Void,
 
     Function {
-        args: Vec<ResolvedType>,
-        returns: Box<ResolvedType>,
+        args: Vec<Resolved>,
+        returns: Box<Resolved>,
     },
-    Pointer(Box<ResolvedType>),
-    // Struct(&'src str, Vec<Field>),
+    Pointer(Box<Resolved>),
+    // Struct(Vec<Field>),
+    // Custom(&'src, Box<Resolved>)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -145,32 +145,32 @@ pub struct Symbol<'src, T> {
     pub ty: T,
 }
 
-impl<'src> std::fmt::Display for RawType<'src> {
+impl<'src> std::fmt::Display for Raw<'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            RawType::Unknown => "{unknown}".to_string(),
-            RawType::Base(s) => s.to_string(),
-            RawType::Pointer(raw_type) => format!("*{raw_type}"),
+            Raw::Infer => "{unknown}".to_string(),
+            Raw::Base(s) => s.to_string(),
+            Raw::Pointer(raw_type) => format!("*{raw_type}"),
         };
         f.write_str(&s)
     }
 }
 
-impl std::fmt::Display for ResolvedType {
+impl std::fmt::Display for Resolved {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            ResolvedType::Infer => "{unknown}".to_string(),
-            ResolvedType::U8 => "u8".to_string(),
-            ResolvedType::U16 => "u16".to_string(),
-            ResolvedType::U32 => "u32".to_string(),
-            ResolvedType::U64 => "u64".to_string(),
-            ResolvedType::I8 => "i8".to_string(),
-            ResolvedType::I16 => "i16".to_string(),
-            ResolvedType::I32 => "i32".to_string(),
-            ResolvedType::I64 => "i64".to_string(),
-            ResolvedType::Bool => "bool".to_string(),
-            ResolvedType::Void => "void".to_string(),
-            ResolvedType::Function { args, returns } => {
+            Resolved::Infer => "{unknown}".to_string(),
+            Resolved::U8 => "u8".to_string(),
+            Resolved::U16 => "u16".to_string(),
+            Resolved::U32 => "u32".to_string(),
+            Resolved::U64 => "u64".to_string(),
+            Resolved::I8 => "i8".to_string(),
+            Resolved::I16 => "i16".to_string(),
+            Resolved::I32 => "i32".to_string(),
+            Resolved::I64 => "i64".to_string(),
+            Resolved::Bool => "bool".to_string(),
+            Resolved::Void => "void".to_string(),
+            Resolved::Function { args, returns } => {
                 let args = args
                     .iter()
                     .map(|arg| format!("{arg}"))
@@ -178,9 +178,31 @@ impl std::fmt::Display for ResolvedType {
                     .join(",");
                 format!("fn({args}) -> {returns}")
             }
-            ResolvedType::Pointer(resolved_type) => format!("*{resolved_type}"),
+            Resolved::Pointer(resolved_type) => format!("*{resolved_type}"),
         };
         f.write_str(&s)
+    }
+}
+
+impl Resolved {
+    pub fn width(&self) -> u8 {
+        use Resolved::*;
+        match self {
+            U8 | I8 => 8,
+            U16 | I16 => 16,
+            U32 | I32 | Bool => 32,
+            U64 | I64 | Pointer(_) => 64,
+            rest @ (Infer | Void | Function { .. }) => panic!("{rest} does not have a width"),
+        }
+    }
+
+    pub fn signed(&self) -> bool {
+        use Resolved::*;
+        match self {
+            U8 | U16 | U32 | U64 | Bool | Pointer(_) => false,
+            I8 | I16 | I32 | I64 => true,
+            rest @ (Infer | Void | Function { .. }) => panic!("{rest} does not have a width"),
+        }
     }
 }
 
@@ -222,6 +244,8 @@ pub enum SKind<'src, T> {
 pub struct Span<'src> {
     pub lo: usize,
     pub hi: usize,
+    pub row: usize,
+    pub col: usize,
     pub src: &'src [u8],
 }
 
@@ -266,16 +290,23 @@ impl<'src> std::fmt::Display for Span<'src> {
             carets.push_str("...");
         }
 
-        write!(f, "\n\n{}\n{}{}", line_text, spaces, carets)
+        write!(
+            f,
+            "\n\n{}:{}:\n{}\n{}{}",
+            self.row + 1, self.col, line_text, spaces, carets
+        )
     }
 }
 
 impl<'src> Span<'src> {
     pub fn merge(self, other: Self) -> Self {
+        let smaller = if self.lo <= other.lo { &self } else { &other };
         Self {
             lo: self.lo.min(other.lo),
             hi: self.hi.max(other.hi),
             src: self.src,
+            row: smaller.row,
+            col: smaller.col,
         }
     }
 }
