@@ -19,14 +19,13 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn make_token(&mut self, kind: TKind<'src>, lo: usize) -> Token<'src> {
+    fn make_token(&mut self, kind: TKind, lo: usize) -> Token {
         let hi = self.cursor;
         Token {
             kind,
             span: Span {
                 lo,
                 hi,
-                src: self.src,
                 row: self.row,
                 col: self.col,
             },
@@ -53,7 +52,7 @@ impl<'src> Lexer<'src> {
         self.rest.get(self.cursor).copied()
     }
 
-    fn read_num(&mut self) -> Option<Token<'src>> {
+    fn read_num(&mut self) -> Option<Token> {
         let start = self.cursor;
         let mut buf = vec![];
 
@@ -82,7 +81,7 @@ impl<'src> Lexer<'src> {
     }
 
     // This returns either an Ident or a Keyword, depending on what the string equates to
-    fn read_word(&mut self) -> Option<Token<'src>> {
+    fn read_word(&mut self, ctx: &mut Context) -> Option<Token> {
         let start = self.cursor;
         // Identifiers can only start with letters or underscores
         let first = self.peek()?;
@@ -112,7 +111,7 @@ impl<'src> Lexer<'src> {
             "return" => TKind::Return,
             "true" => TKind::Bool(true),
             "false" => TKind::Bool(false),
-            _ => TKind::Ident(s),
+            _ => TKind::Ident(ctx.to_symbol(s)),
         };
         Some(self.make_token(kind, start))
     }
@@ -120,7 +119,7 @@ impl<'src> Lexer<'src> {
     // This reader will always return None, but a "successful" read will advance the cursor.
     // This is done to make the function pointer the same type as the others so it can be used in
     // funky ways :)
-    fn read_whitespace(&mut self) -> Option<Token<'src>> {
+    fn read_whitespace(&mut self) -> Option<Token> {
         while let Some(c) = self.peek()
             && c.is_ascii_whitespace()
         {
@@ -129,7 +128,7 @@ impl<'src> Lexer<'src> {
         None
     }
 
-    fn read_strlit(&mut self) -> Option<Token<'src>> {
+    fn read_strlit(&mut self, ctx: &mut Context) -> Option<Token> {
         let start = self.cursor;
         if self.peek()? == b'"' {
             self.consume();
@@ -149,11 +148,12 @@ impl<'src> Lexer<'src> {
         }
 
         // +1/-1 to disclude the surrounding "..."
-        let kind = TKind::Str(self.rest.get(start + 1..self.cursor - 1)?);
+        let strlit = str::from_utf8(self.rest.get(start + 1..self.cursor - 1)?).expect("Unicode not allowed");
+        let kind = TKind::Str(ctx.to_symbol(strlit));
         Some(self.make_token(kind, start))
     }
 
-    fn read_punct(&mut self) -> Option<Token<'src>> {
+    fn read_punct(&mut self) -> Option<Token> {
         let start = self.cursor;
         let known_punctuators = &["==", "!=", "<=", ">=", "->", "&&", "||", "<<", ">>"];
 
@@ -219,16 +219,12 @@ impl<'src> Lexer<'src> {
 
         Some(self.make_token(kind, start))
     }
-}
 
-impl<'src> Iterator for Lexer<'src> {
-    type Item = Token<'src>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    pub fn next_token(&mut self, ctx: &mut Context) -> Option<Token> {
         self.read_whitespace()
-            .or_else(|| self.read_word())
+            .or_else(|| self.read_word(ctx))
             .or_else(|| self.read_num())
-            .or_else(|| self.read_strlit())
+            .or_else(|| self.read_strlit(ctx))
             .or_else(|| self.read_punct())
     }
 }

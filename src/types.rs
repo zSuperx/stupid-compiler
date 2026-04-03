@@ -1,34 +1,111 @@
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Token<'src> {
-    pub kind: TKind<'src>,
-    pub span: Span<'src>,
+pub struct Context {
+    // The original source code
+    pub source: Vec<u8>,
+    // A String<->Symbol map that lets us refer to strings with usize
+    pub interner: StringStore,
+    pub symbols: Vec<SymbolData>,
 }
 
-impl<'src> std::fmt::Display for TKind<'src> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TKind::Int(x) => f.write_fmt(format_args!("int literal {}", x)),
-            TKind::Bool(x) => f.write_fmt(format_args!("bool literal {}", x)),
-            TKind::Str(x) => f.write_fmt(format_args!(
-                "string literal \"{}\"",
-                str::from_utf8(x).unwrap()
-            )),
-            TKind::Ident(x) => f.write_fmt(format_args!("identifer \"{}\"", x)),
-            x => f.write_fmt(format_args!("{:?}", x)),
+impl Context {
+    pub fn new(src: Vec<u8>) -> Self {
+        Self {
+            source: src,
+            interner: StringStore::new(),
+            symbols: vec![],
+        }
+    }
+
+    pub fn to_symbol(&mut self, name: &str) -> Symbol {
+        // If we've already added the string to the store, get its ID
+        if let Some(id) = self.interner.mapping.get(name) {
+            return *id;
+        } else {
+            // Else add it
+            let next_id = Symbol(self.interner.store.len());
+            self.interner.mapping.insert(name.to_string(), next_id);
+            self.interner.store.push(name.to_string());
+            next_id
+        }
+    }
+
+    pub fn lookup_symbol(&self, id: Symbol) -> &str {
+        &self.interner.store[id.0]
+    }
+
+    pub fn declare_local(&mut self, name: Symbol, ty: Type) -> usize {
+        let id = self.symbols.len();
+        self.symbols.push(SymbolData {
+            id,
+            name,
+            ty,
+            addressed: true,
+        });
+        id
+    }
+
+    pub fn declare_function(&mut self, name: Symbol, ty: Type) -> usize {
+        let id = self.symbols.len();
+        self.symbols.push(SymbolData {
+            id,
+            name,
+            ty,
+            addressed: true,
+        });
+        id
+    }
+
+    pub fn declare_global(&mut self, name: Symbol, ty: Type) -> usize {
+        let id = self.symbols.len();
+        self.symbols.push(SymbolData {
+            id,
+            name,
+            ty,
+            addressed: true,
+        });
+        id
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Symbol(pub usize);
+
+pub struct SymbolData {
+    pub id: usize,
+    pub name: Symbol,
+    pub ty: Type,
+    pub addressed: bool,
+}
+
+pub struct StringStore {
+    mapping: HashMap<String, Symbol>,
+    store: Vec<String>,
+}
+
+impl StringStore {
+    pub fn new() -> Self {
+        Self {
+            mapping: HashMap::new(),
+            store: vec![],
         }
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Token {
+    pub kind: TKind,
+    pub span: Span,
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Default)]
-pub enum TKind<'src> {
+pub enum TKind {
     #[default]
     Eof,
     Int(u64),
     Bool(bool),
-    Str(&'src [u8]),
-    Ident(&'src str),
+    Str(Symbol),
+    Ident(Symbol),
 
     // Declarator keywords
     Let,
@@ -82,45 +159,48 @@ pub enum TKind<'src> {
     GtEq,   // >=
 }
 
+type SymbolId = usize;
+
 /// Represents top-level "things", which includes:
 /// - function definitions
 /// - type definitions
 /// - global variables
 #[derive(Debug, Clone)]
-pub enum OKind<'src, T> {
+pub enum OKind {
     Fn {
-        name: &'src str,
-        returns: T,
-        args: Vec<Symbol<'src, T>>,
-        locals: HashMap<&'src str, Symbol<'src, T>>,
-        body: Stmt<'src, T>,
+        name: SymbolId,
+        returns: Type,
+        args: Vec<SymbolId>,
+        body: Stmt,
     },
     Global {
-        lhs: Symbol<'src, T>,
-        rhs: Expr<'src, T>,
+        lhs: SymbolId,
+        rhs: Expr,
     },
     Struct {
-        name: &'src str,
-        fields: Vec<Symbol<'src, T>>,
+        name: SymbolId,
+        fields: Vec<SymbolId>,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct Object<'src, T> {
-    pub kind: OKind<'src, T>,
-    pub span: Span<'src>,
-}
-
-#[derive(Debug, Clone)]
-pub enum Raw<'src> {
-    Infer,
-    Base(&'src str),
-    Pointer(Box<Raw<'src>>),
+pub struct Object {
+    pub kind: OKind,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Resolved {
+pub struct Type {
+    pub kind: TyKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TyKind {
+    // After the parsing stage, MOST nodes will have an Infer type
+    // After the resolve stage, ALL nodes should have a concrete type
     Infer,
+    Unresolved(Symbol),
 
     U8,
     U16,
@@ -134,47 +214,30 @@ pub enum Resolved {
     Void,
 
     Function {
-        args: Vec<Resolved>,
-        returns: Box<Resolved>,
+        args: Vec<TyKind>,
+        returns: Box<TyKind>,
     },
-    Pointer(Box<Resolved>),
+    Pointer(Box<TyKind>),
     // Struct(Vec<Field>),
-    // Custom(&'src, Box<Resolved>)
+    // Custom(&'src, Box<Type>)
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Symbol<'src, T> {
-    pub name: &'src str,
-    pub ty: T,
-    pub addressed: bool,
-}
-
-impl<'src> std::fmt::Display for Raw<'src> {
+impl std::fmt::Display for TyKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            Raw::Infer => "{unknown}".to_string(),
-            Raw::Base(s) => s.to_string(),
-            Raw::Pointer(raw_type) => format!("*{raw_type}"),
-        };
-        f.write_str(&s)
-    }
-}
-
-impl std::fmt::Display for Resolved {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            Resolved::Infer => "{unknown}".to_string(),
-            Resolved::U8 => "u8".to_string(),
-            Resolved::U16 => "u16".to_string(),
-            Resolved::U32 => "u32".to_string(),
-            Resolved::U64 => "u64".to_string(),
-            Resolved::I8 => "i8".to_string(),
-            Resolved::I16 => "i16".to_string(),
-            Resolved::I32 => "i32".to_string(),
-            Resolved::I64 => "i64".to_string(),
-            Resolved::Bool => "bool".to_string(),
-            Resolved::Void => "void".to_string(),
-            Resolved::Function { args, returns } => {
+            TyKind::Infer => "{unknown}".to_string(),
+            TyKind::Unresolved(_) => "{unknown custom type}".to_string(),
+            TyKind::U8 => "u8".to_string(),
+            TyKind::U16 => "u16".to_string(),
+            TyKind::U32 => "u32".to_string(),
+            TyKind::U64 => "u64".to_string(),
+            TyKind::I8 => "i8".to_string(),
+            TyKind::I16 => "i16".to_string(),
+            TyKind::I32 => "i32".to_string(),
+            TyKind::I64 => "i64".to_string(),
+            TyKind::Bool => "bool".to_string(),
+            TyKind::Void => "void".to_string(),
+            TyKind::Function { args, returns } => {
                 let args = args
                     .iter()
                     .map(|arg| format!("{arg}"))
@@ -182,78 +245,81 @@ impl std::fmt::Display for Resolved {
                     .join(",");
                 format!("fn({args}) -> {returns}")
             }
-            Resolved::Pointer(resolved_type) => format!("*{resolved_type}"),
+            TyKind::Pointer(ty) => format!("*{}", ty),
         };
         f.write_str(&s)
     }
 }
 
-impl Resolved {
+impl TyKind {
     pub fn width(&self) -> u8 {
-        use Resolved::*;
+        use TyKind::*;
         match self {
             U8 | I8 => 8,
             U16 | I16 => 16,
             U32 | I32 | Bool => 32,
             U64 | I64 | Pointer(_) => 64,
-            rest @ (Infer | Void | Function { .. }) => panic!("{rest} does not have a width"),
+            rest @ (Unresolved(_) | Infer | Void | Function { .. }) => {
+                panic!("{rest} does not have a width")
+            }
         }
     }
 
     pub fn signed(&self) -> bool {
-        use Resolved::*;
+        use TyKind::*;
         match self {
             U8 | U16 | U32 | U64 | Bool | Pointer(_) => false,
             I8 | I16 | I32 | I64 => true,
-            rest @ (Infer | Void | Function { .. }) => panic!("{rest} does not have a width"),
+            rest @ (Unresolved(_) | Infer | Void | Function { .. }) => {
+                panic!("{rest} cannot be a signed/unsigned")
+            }
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Stmt<'src, T> {
-    pub kind: SKind<'src, T>,
-    pub span: Span<'src>,
+pub struct Stmt {
+    pub kind: SKind,
+    pub span: Span,
 }
 
-impl<'src, T> Stmt<'src, T> {
-    pub fn new(kind: SKind<'src, T>, span: Span<'src>) -> Self {
+impl Stmt {
+    pub fn new(kind: SKind, span: Span) -> Self {
         Self { kind, span }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum SKind<'src, T> {
+pub enum SKind {
     Let {
-        lhs: Symbol<'src, T>,
-        rhs: Expr<'src, T>,
+        lhs: SymbolId,
+        rhs: Expr,
     },
     While {
-        cond: Expr<'src, T>,
-        body: Box<Stmt<'src, T>>,
+        cond: Expr,
+        body: Box<Stmt>,
     },
     Continue,
     Break,
     If {
-        cond: Expr<'src, T>,
-        then_: Box<Stmt<'src, T>>,
-        else_: Box<Stmt<'src, T>>,
+        cond: Expr,
+        then_: Box<Stmt>,
+        else_: Box<Stmt>,
     },
-    Return(Expr<'src, T>),
-    Block(Vec<Stmt<'src, T>>),
-    Expr(Expr<'src, T>),
+    Return(Expr),
+    Block(Vec<Stmt>),
+    Expr(Expr),
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct Span<'src> {
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd)]
+pub struct Span {
     pub lo: usize,
     pub hi: usize,
     pub row: usize,
     pub col: usize,
-    pub src: &'src [u8],
 }
 
-impl<'src> std::fmt::Debug for Span<'src> {
+impl std::fmt::Debug for Span {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Span")
             .field("lo", &self.lo)
@@ -263,22 +329,22 @@ impl<'src> std::fmt::Debug for Span<'src> {
     }
 }
 
-impl<'src> std::fmt::Display for Span<'src> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let line_start = self.src[..self.lo]
-            .iter()
-            .rposition(|&b| b == b'\n')
+impl Span {
+    fn print_span(&self, src: &str) {
+        let line_start = src[..self.lo]
+            .chars()
+            .rev()
+            .position(|b| b == '\n')
             .map(|pos| pos + 1)
             .unwrap_or(0);
 
-        let line_end = self.src[self.lo..]
-            .iter()
-            .position(|&b| b == b'\n')
+        let line_end = src[self.lo..]
+            .chars()
+            .position(|b| b == '\n')
             .map(|pos| self.lo + pos)
-            .unwrap_or(self.src.len());
+            .unwrap_or(src.len());
 
-        let line_text =
-            std::str::from_utf8(&self.src[line_start..line_end]).unwrap_or("<invalid utf8>");
+        let line_text = &src[line_start..line_end];
 
         let before_span_count = self.lo.saturating_sub(line_start);
 
@@ -294,8 +360,7 @@ impl<'src> std::fmt::Display for Span<'src> {
             carets.push_str("...");
         }
 
-        write!(
-            f,
+        println!(
             "\n\n{}:{}:\n{}\n{}{}",
             self.row + 1,
             self.col,
@@ -306,13 +371,12 @@ impl<'src> std::fmt::Display for Span<'src> {
     }
 }
 
-impl<'src> Span<'src> {
+impl Span {
     pub fn merge(self, other: Self) -> Self {
         let smaller = if self.lo <= other.lo { &self } else { &other };
         Self {
             lo: self.lo.min(other.lo),
             hi: self.hi.max(other.hi),
-            src: self.src,
             row: smaller.row,
             col: smaller.col,
         }
@@ -320,16 +384,17 @@ impl<'src> Span<'src> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Expr<'src, T> {
-    pub kind: EKind<'src, T>,
-    pub ty: T,
-    pub span: Span<'src>,
+pub struct Expr {
+    pub kind: EKind,
+    pub ty: TyKind,
+    pub span: Span,
 }
 
-impl<'src, T> std::fmt::Display for EKind<'src, T> {
+impl std::fmt::Display for EKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            EKind::Symbol(_) => "variable",
+            EKind::Unresolved(symbol) => "unresolved variable",
+            EKind::Variable(_) => "variable",
             EKind::Int(_) => "int",
             EKind::Bool(_) => "bool",
             EKind::Nothing => "nothing",
@@ -344,39 +409,41 @@ impl<'src, T> std::fmt::Display for EKind<'src, T> {
     }
 }
 
-impl<'src, T> Expr<'src, T> {
-    pub fn new(kind: EKind<'src, T>, ty: T, span: Span<'src>) -> Self {
+impl Expr {
+    pub fn new(kind: EKind, ty: TyKind, span: Span) -> Self {
         Self { kind, ty, span }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum EKind<'src, T> {
-    Symbol(Symbol<'src, T>),
+pub enum EKind {
+    Unresolved(Symbol), // This should resolve to a Variable after resolver
+    Variable(SymbolId),
+
     Int(u64),
     Bool(bool),
     Nothing,
-    Str(&'src [u8]),
+    Str(Symbol),
     Call {
-        callee: Box<Expr<'src, T>>,
-        args: Vec<Expr<'src, T>>,
+        callee: Box<Expr>,
+        args: Vec<Expr>,
     },
     Unary {
         op: UnOp,
-        rhs: Box<Expr<'src, T>>,
+        rhs: Box<Expr>,
     },
     Bin {
         op: BinOp,
-        lhs: Box<Expr<'src, T>>,
-        rhs: Box<Expr<'src, T>>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
     FieldAccess {
-        lhs: Box<Expr<'src, T>>,
-        rhs: Box<Expr<'src, T>>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
     Index {
-        lhs: Box<Expr<'src, T>>,
-        rhs: Box<Expr<'src, T>>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
 }
 

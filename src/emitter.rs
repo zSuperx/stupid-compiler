@@ -154,7 +154,7 @@ impl<'src> Emitter<'src> {
         });
     }
 
-    fn next_label(&mut self, stmt: &Stmt<'src, Resolved>) -> String {
+    fn next_label(&mut self, stmt: &Stmt<'src, Type>) -> String {
         match &stmt.kind {
             SKind::While { .. } => {
                 self.loop_label += 1;
@@ -173,14 +173,14 @@ impl<'src> Emitter<'src> {
         self.vr_count
     }
 
-    pub fn emit_program(mut self, objs: &[Object<'src, Resolved>]) -> Vec<Ir> {
+    pub fn emit_program(mut self, objs: &[Object<'src, Type>]) -> Vec<Ir> {
         for obj in objs {
             self.emit_object(obj);
         }
         self.program
     }
 
-    fn emit_object(&mut self, obj: &Object<'src, Resolved>) {
+    fn emit_object(&mut self, obj: &Object<'src, Type>) {
         match &obj.kind {
             OKind::Fn {
                 name,
@@ -203,7 +203,7 @@ impl<'src> Emitter<'src> {
                 self.emit_stmt(body);
 
                 // END FUNCTION
-                if *returns == Resolved::Void && !matches!(self.program.last().unwrap().kind, IKind::Ret(_)) {
+                if *returns == Type::Void && !matches!(self.program.last().unwrap().kind, IKind::Ret(_)) {
                     self.emit_inst(IKind::Ret(None), 0);
                 }
                 self.emit_inst(IKind::Label(format!("FnEnd_{name}")), 0);
@@ -213,7 +213,7 @@ impl<'src> Emitter<'src> {
         }
     }
 
-    fn emit_stmt(&mut self, stmt: &Stmt<'src, Resolved>) {
+    fn emit_stmt(&mut self, stmt: &Stmt<'src, Type>) {
         match &stmt.kind {
             SKind::Let { lhs, rhs } => {
                 let target = self.next_vr();
@@ -231,7 +231,7 @@ impl<'src> Emitter<'src> {
                 let end_label = label + "_end";
                 let cond_vr = self.emit_expr(cond);
                 let target = self.next_vr();
-                self.emit_inst(IKind::Imm(target, 0x0), Resolved::Bool.width());
+                self.emit_inst(IKind::Imm(target, 0x0), Type::Bool.width());
                 self.emit_inst(IKind::Bne(target, cond_vr, end_label.clone()), cond.ty.width());
                 self.emit_inst(IKind::Label(start_label.clone()), 0);
                 self.emit_stmt(body);
@@ -254,7 +254,7 @@ impl<'src> Emitter<'src> {
                 let end_label = label + "_end";
                 let cond_vr = self.emit_expr(cond);
                 let target = self.next_vr();
-                self.emit_inst(IKind::Imm(target, 0x0), Resolved::Bool.width());
+                self.emit_inst(IKind::Imm(target, 0x0), Type::Bool.width());
                 self.emit_inst(IKind::Beq(target, cond_vr, end_label.clone()), cond.ty.width());
                 self.emit_inst(IKind::Label(then_label), 0);
                 self.emit_stmt(then_);
@@ -269,7 +269,7 @@ impl<'src> Emitter<'src> {
                 self.emit_inst(IKind::Label(end_label), 0);
             }
             SKind::Return(expr) => {
-                if expr.ty != Resolved::Void {
+                if expr.ty != Type::Void {
                     let ret = self.emit_expr(expr);
                     self.emit_inst(IKind::Ret(Some(ret)), expr.ty.width());
                 } else {
@@ -285,7 +285,7 @@ impl<'src> Emitter<'src> {
         }
     }
 
-    fn emit_expr(&mut self, Expr { kind, ty, .. }: &Expr<'src, Resolved>) -> VReg {
+    fn emit_expr(&mut self, Expr { kind, ty, .. }: &Expr<'src, Type>) -> VReg {
         let target;
         match kind {
             EKind::Symbol(symbol) => {
