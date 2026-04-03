@@ -1,3 +1,3 @@
 fn b(z: u32) {
-  let x: i32 = 5;
+  let x: Bob = 5;
 }

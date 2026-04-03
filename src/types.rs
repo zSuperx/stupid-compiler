@@ -1,11 +1,16 @@
 use std::collections::HashMap;
 
+pub type TypeId = usize;
+#[derive(Debug)]
 pub struct Context {
     // The original source code
     pub source: Vec<u8>,
     // A String<->Symbol map that lets us refer to strings with usize
     pub interner: StringStore,
+    // SymbolId can be used to map to SymbolData, which holds info like type, addressed, etc
     pub symbols: Vec<SymbolData>,
+    // TypeId can be used to map to TypeData
+    pub types: Vec<TypeData>,
 }
 
 impl Context {
@@ -14,6 +19,7 @@ impl Context {
             source: src,
             interner: StringStore::new(),
             symbols: vec![],
+            types: vec![],
         }
     }
 
@@ -34,7 +40,18 @@ impl Context {
         &self.interner.store[id.0]
     }
 
-    pub fn declare_local(&mut self, name: Symbol, ty: Type) -> usize {
+    pub fn declare_type(&mut self, name: Symbol, size: usize) -> TypeId {
+        let id = self.types.len();
+        self.types.push(TypeData {
+            id,
+            name,
+            size,
+            ..Default::default()
+        });
+        id
+    }
+
+    pub fn declare_local(&mut self, name: Symbol, ty: Type) -> SymbolId {
         let id = self.symbols.len();
         self.symbols.push(SymbolData {
             id,
@@ -45,7 +62,7 @@ impl Context {
         id
     }
 
-    pub fn declare_function(&mut self, name: Symbol, ty: Type) -> usize {
+    pub fn declare_function(&mut self, name: Symbol, ty: Type) -> SymbolId {
         let id = self.symbols.len();
         self.symbols.push(SymbolData {
             id,
@@ -68,16 +85,28 @@ impl Context {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
 pub struct Symbol(pub usize);
 
+#[derive(Debug)]
 pub struct SymbolData {
     pub id: usize,
     pub name: Symbol,
-    pub ty: Type,
+    pub ty: TypeId,
     pub addressed: bool,
 }
 
+#[derive(Debug, Default)]
+pub struct TypeData {
+    pub id: usize,
+    pub name: Symbol,
+    pub size: usize,
+    pub is_primitive: bool,
+    pub is_integral: bool,
+    pub is_signed: bool,
+}
+
+#[derive(Debug)]
 pub struct StringStore {
     mapping: HashMap<String, Symbol>,
     store: Vec<String>,
@@ -159,7 +188,7 @@ pub enum TKind {
     GtEq,   // >=
 }
 
-type SymbolId = usize;
+pub type SymbolId = usize;
 
 /// Represents top-level "things", which includes:
 /// - function definitions
@@ -200,81 +229,12 @@ pub enum TyKind {
     // After the parsing stage, MOST nodes will have an Infer type
     // After the resolve stage, ALL nodes should have a concrete type
     Infer,
+    // This is for CUSTOM type names. The
     Unresolved(Symbol),
 
-    U8,
-    U16,
-    U32,
-    U64,
-    I8,
-    I16,
-    I32,
-    I64,
-    Bool,
-    Void,
-
-    Function {
-        args: Vec<TyKind>,
-        returns: Box<TyKind>,
-    },
-    Pointer(Box<TyKind>),
-    // Struct(Vec<Field>),
-    // Custom(&'src, Box<Type>)
-}
-
-impl std::fmt::Display for TyKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            TyKind::Infer => "{unknown}".to_string(),
-            TyKind::Unresolved(_) => "{unknown custom type}".to_string(),
-            TyKind::U8 => "u8".to_string(),
-            TyKind::U16 => "u16".to_string(),
-            TyKind::U32 => "u32".to_string(),
-            TyKind::U64 => "u64".to_string(),
-            TyKind::I8 => "i8".to_string(),
-            TyKind::I16 => "i16".to_string(),
-            TyKind::I32 => "i32".to_string(),
-            TyKind::I64 => "i64".to_string(),
-            TyKind::Bool => "bool".to_string(),
-            TyKind::Void => "void".to_string(),
-            TyKind::Function { args, returns } => {
-                let args = args
-                    .iter()
-                    .map(|arg| format!("{arg}"))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                format!("fn({args}) -> {returns}")
-            }
-            TyKind::Pointer(ty) => format!("*{}", ty),
-        };
-        f.write_str(&s)
-    }
-}
-
-impl TyKind {
-    pub fn width(&self) -> u8 {
-        use TyKind::*;
-        match self {
-            U8 | I8 => 8,
-            U16 | I16 => 16,
-            U32 | I32 | Bool => 32,
-            U64 | I64 | Pointer(_) => 64,
-            rest @ (Unresolved(_) | Infer | Void | Function { .. }) => {
-                panic!("{rest} does not have a width")
-            }
-        }
-    }
-
-    pub fn signed(&self) -> bool {
-        use TyKind::*;
-        match self {
-            U8 | U16 | U32 | U64 | Bool | Pointer(_) => false,
-            I8 | I16 | I32 | I64 => true,
-            rest @ (Unresolved(_) | Infer | Void | Function { .. }) => {
-                panic!("{rest} cannot be a signed/unsigned")
-            }
-        }
-    }
+    Base,
+    Function { args: Vec<TypeId>, returns: TypeId },
+    Pointer(TypeId),
 }
 
 #[derive(Debug, Clone)]

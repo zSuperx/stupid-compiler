@@ -170,9 +170,9 @@ impl<'src> Parser<'src> {
             kind: TyKind::Function {
                 args: args
                     .iter()
-                    .map(|a| ctx.symbols[*a].ty.kind.clone())
+                    .map(|a| ctx.symbols[*a].ty)
                     .collect(),
-                returns: Box::new(returns.kind.clone()),
+                returns: returns,
             },
             span: returns.span,
         };
@@ -193,7 +193,7 @@ impl<'src> Parser<'src> {
         let span = self.mark();
         let tok = self.consume();
         let kind = match tok.kind {
-            TKind::Star => TyKind::Pointer(Box::new(self.parse_type(ctx).kind)),
+            TKind::Star => TyKind::Pointer(self.parse_type(ctx)),
             TKind::Ident(name) => TyKind::Unresolved(name),
             x => panic!("Expected type, found {x:?}"),
         };

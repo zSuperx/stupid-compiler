@@ -20,6 +20,51 @@ fn main() {
     let content = std::fs::read(file).unwrap();
 
     let mut ctx = Context::new(content.clone());
+
+    let sym = ctx.to_symbol("u8");
+    let type_id = ctx.declare_type(sym, 1);
+    ctx.types[type_id].is_primitive = true;
+    ctx.types[type_id].is_integral = true;
+
+    let sym = ctx.to_symbol("i8");
+    let type_id = ctx.declare_type(sym, 1);
+    ctx.types[type_id].is_primitive = true;
+    ctx.types[type_id].is_integral = true;
+    ctx.types[type_id].is_signed = true;
+
+    let sym = ctx.to_symbol("u16");
+    let type_id = ctx.declare_type(sym, 2);
+    ctx.types[type_id].is_primitive = true;
+    ctx.types[type_id].is_integral = true;
+
+    let sym = ctx.to_symbol("i16");
+    let type_id = ctx.declare_type(sym, 2);
+    ctx.types[type_id].is_primitive = true;
+    ctx.types[type_id].is_integral = true;
+    ctx.types[type_id].is_signed = true;
+
+    let sym = ctx.to_symbol("u32");
+    let type_id = ctx.declare_type(sym, 4);
+    ctx.types[type_id].is_primitive = true;
+    ctx.types[type_id].is_integral = true;
+
+    let sym = ctx.to_symbol("i32");
+    let type_id = ctx.declare_type(sym, 4);
+    ctx.types[type_id].is_primitive = true;
+    ctx.types[type_id].is_integral = true;
+    ctx.types[type_id].is_signed = true;
+
+    let sym = ctx.to_symbol("u64");
+    let type_id = ctx.declare_type(sym, 8);
+    ctx.types[type_id].is_primitive = true;
+    ctx.types[type_id].is_integral = true;
+
+    let sym = ctx.to_symbol("i64");
+    let type_id = ctx.declare_type(sym, 8);
+    ctx.types[type_id].is_primitive = true;
+    ctx.types[type_id].is_integral = true;
+    ctx.types[type_id].is_signed = true;
+
     let mut lexer = Lexer::new(&content);
 
     let mut tokens = vec![];
@@ -35,4 +80,5 @@ fn main() {
     // for instruction in emitted {
     //     println!("{instruction}")
     // }
+    println!("{ctx:?}");
 }
