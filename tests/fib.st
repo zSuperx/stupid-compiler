@@ -8,6 +8,5 @@ fn fib(n: u32) -> u32 {
 
 fn main() {
   let n: u32 = 5;
-
-  let x = fib(n);
+  let x = fib(fib(n));
 }

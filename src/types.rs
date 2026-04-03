@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Token<'src> {
     pub kind: TKind<'src>,
@@ -90,6 +92,7 @@ pub enum OKind<'src, T> {
         name: &'src str,
         returns: T,
         args: Vec<Symbol<'src, T>>,
+        locals: HashMap<&'src str, Symbol<'src, T>>,
         body: Stmt<'src, T>,
     },
     Global {
@@ -143,6 +146,7 @@ pub enum Resolved {
 pub struct Symbol<'src, T> {
     pub name: &'src str,
     pub ty: T,
+    pub addressed: bool,
 }
 
 impl<'src> std::fmt::Display for Raw<'src> {
@@ -293,7 +297,11 @@ impl<'src> std::fmt::Display for Span<'src> {
         write!(
             f,
             "\n\n{}:{}:\n{}\n{}{}",
-            self.row + 1, self.col, line_text, spaces, carets
+            self.row + 1,
+            self.col,
+            line_text,
+            spaces,
+            carets
         )
     }
 }

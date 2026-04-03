@@ -23,6 +23,8 @@ fn main() {
     // println!("{parsed:#?}");
     let resolved = Resolver::new().resolve_program(&parsed);
     // println!("{resolved:#?}");
-    let emitted = Emitter::new().emit_program(&resolved).join("");
-    println!("{emitted}");
+    let emitted = Emitter::new().emit_program(&resolved);
+    for instruction in emitted {
+        println!("{instruction}");
+    }
 }

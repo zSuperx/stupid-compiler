@@ -6,121 +6,131 @@ pub struct Emitter<'src> {
     vr_count: VReg,
     if_label: usize,
     loop_label: usize,
-    program: Vec<String>,
+    program: Vec<Ir>,
     symbols: HashMap<&'src str, VReg>,
 }
 
 type VReg = usize;
 
-enum Ir {
+
+pub struct Ir {
+    pub kind: IKind,
+    pub width: u8,
+}
+
+pub enum IKind {
     /* FUNCTIONS */
-    /// get dst, index
-    GetParam(VReg, u8),
-    /// set src, index
-    SetParam(VReg, u8),
-    /// call dst, NAME
-    Call(VReg, String),
-    /// icall dst, src
-    Icall(VReg, VReg),
-    /// ret (src)
+    GetParam(VReg, usize),
+    SetParam(VReg, usize),
+    Call(VReg, String, usize),
+    Icall(VReg, VReg, usize),
     Ret(Option<VReg>),
+    Local(VReg),
 
     /* DATA */
-    /// imm dst, width, imm
-    Imm(VReg, u8, u64),
-    /// addr dst, index
-    Addr(VReg, u64),
-    /// load dst, width, src
-    Load(VReg, u8, VReg),
-    /// store src2, width, src1
-    Store(VReg, u8, VReg),
+    Imm(VReg, i64),
+    Addr(VReg, usize),
+    Load(VReg, VReg),
+    Store(VReg, VReg),
+    Move(VReg, VReg),
 
     /* ARITHMETIC */
-    /// add, dst, src1, src2
     Add(VReg, VReg, VReg),
-    /// Sub, dst, src1, src2
     Sub(VReg, VReg, VReg),
-    /// Mul, dst, src1, src2
     Mul(VReg, VReg, VReg),
-    /// Sdiv, dst, src1, src2
     Sdiv(VReg, VReg, VReg),
-    /// udiv, dst, src1, src2
     Udiv(VReg, VReg, VReg),
 
     /* ORDERING */
-    /// sgt dst, src1, src2
     Sgt(VReg, VReg, VReg),
-    /// sge dst, src1, src2
     Sge(VReg, VReg, VReg),
-    /// ugt dst, src1, src2
     Ugt(VReg, VReg, VReg),
-    /// uge dst, src1, src2
     Uge(VReg, VReg, VReg),
-    /// slt dst, src1, src2
     Slt(VReg, VReg, VReg),
-    /// sle dst, src1, src2
     Sle(VReg, VReg, VReg),
-    /// ult dst, src1, src2
     Ult(VReg, VReg, VReg),
-    /// ule dst, src1, src2
     Ule(VReg, VReg, VReg),
 
     /* EQUALITY */
-    /// eq dst, src1, src2
     Eq(VReg, VReg, VReg),
-    /// ne dst, src1, src2
     Ne(VReg, VReg, VReg),
 
     /* LOGIC */
-    /// and dst, src1, src2
     And(VReg, VReg, VReg),
-    /// or dst, src1, src2
     Or(VReg, VReg, VReg),
-    /// xor dst, src1, src2
     Xor(VReg, VReg, VReg),
 
     /* CONTROL FLOW */
-    /// beq src1, src2, LABEL
+    Label(String),
     Beq(VReg, VReg, String),
-    /// bne src1, src2, LABEL
     Bne(VReg, VReg, String),
     Br(String),
 }
 
 impl std::fmt::Display for Ir {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !matches!(self.kind, IKind::Label(_)) {
+            f.write_str("\t")?;
+        }
+        self.kind.fmt(f, self.width)
+    }
+}
+
+impl IKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>, width: u8) -> std::fmt::Result {
+        let suffix = match width {
+            8 => ".8",
+            16 => ".16",
+            32 => ".32",
+            64 => ".64",
+            _ => "",
+        };
         #[rustfmt::skip]
         let s = match self {
-            Ir::GetParam(dst, index)     => format!("getp %{dst}, {index}"),
-            Ir::SetParam(src, index)     => format!("setp %{src}, {index}"),
-            Ir::Call(dst, name)          => format!("call %{dst}, {name}"),
-            Ir::Icall(dst, src)          => format!("icall %{dst}, %{src}"),
-            Ir::Ret(src)                 => format!("ret {}", src.map(|r| format!("%{r}")).unwrap_or("".to_string())),
-            Ir::Imm(dst, width, imm)     => format!("imm %{dst}, {width}, {imm}"),
-            Ir::Addr(dst, index)         => format!("addr %{dst}, {index}"),
-            Ir::Load(dst, width, src)    => format!("load %{dst}, {width}, %{src}"),
-            Ir::Store(src2, width, src1) => format!("store %{src1}, {width}, %{src2}"),
-            Ir::Add(dst, src1, src2)     => format!("add %{dst}, %{src1}, %{src2}"),
-            Ir::Sub(dst, src1, src2)     => format!("sub %{dst}, %{src1}, %{src2}"),
-            Ir::Mul(dst, src1, src2)     => format!("mul %{dst}, %{src1}, %{src2}"),
-            Ir::Sdiv(dst, src1, src2)    => format!("sdiv %{dst}, %{src1}, %{src2}"),
-            Ir::Udiv(dst, src1, src2)    => format!("udiv %{dst}, %{src1}, %{src2}"),
-            Ir::Sgt(dst, src1, src2)     => format!("sgt %{dst}, %{src1}, %{src2}"),
-            Ir::Sge(dst, src1, src2)     => format!("sge %{dst}, %{src1}, %{src2}"),
-            Ir::Ugt(dst, src1, src2)     => format!("ugt %{dst}, %{src1}, %{src2}"),
-            Ir::Uge(dst, src1, src2)     => format!("uge %{dst}, %{src1}, %{src2}"),
-            Ir::Slt(dst, src1, src2)     => format!("slt %{dst}, %{src1}, %{src2}"),
-            Ir::Sle(dst, src1, src2)     => format!("sle %{dst}, %{src1}, %{src2}"),
-            Ir::Ult(dst, src1, src2)     => format!("ult %{dst}, %{src1}, %{src2}"),
-            Ir::Ule(dst, src1, src2)     => format!("ule %{dst}, %{src1}, %{src2}"),
-            Ir::Eq(dst, src1, src2)      => format!("eq %{dst}, %{src1}, %{src2}"),
-            Ir::Ne(dst, src1, src2)      => format!("ne %{dst}, %{src1}, %{src2}"),
-            Ir::And(dst, src1, src2)     => format!("and %{dst}, %{src1}, %{src2}"),
-            Ir::Or(dst, src1, src2)      => format!("or %{dst}, %{src1}, %{src2}"),
-            Ir::Xor(dst, src1, src2)     => format!("xor %{dst}, %{src1}, %{src2}"),
-            Ir::Beq(src1, src2, label)   => format!("beq %{src1}, %{src2}, {label}"),
-            Ir::Bne(src1, src2, label)   => format!("bne %{src1}, %{src2}, {label}"),
-            Ir::Br(label)                => format!("br {label}"),
+            /* FUNCTIONS */
+            IKind::GetParam(dst, index)   => format!("getp{suffix}\t %{dst}, {index}"),
+            IKind::SetParam(src, index)   => format!("setp{suffix}\t %{src}, {index}"),
+            IKind::Call(dst, name, args)  => format!("call\t %{dst}, {name}, {args}"),
+            IKind::Icall(dst, src, args)  => format!("icall\t %{dst}, %{src}, {args}"),
+            IKind::Ret(src)               => format!("ret{suffix}\t {}", src.map(|r| format!("%{r}")).unwrap_or("".to_string())),
+
+            /* DATA */
+            IKind::Imm(dst, imm)          => format!("imm{suffix}\t %{dst}, {width}, {imm}"),
+            IKind::Addr(dst, index)       => format!("addr\t %{dst}, {index}"),
+            IKind::Load(dst, src)         => format!("load{suffix}\t %{dst}, {width}, %{src}"),
+            IKind::Store(src2, src1)      => format!("store{suffix}\t %{src1}, {width}, %{src2}"),
+            IKind::Move(dst, src)         => format!("move\t %{dst}, %{src}"),
+            IKind::Local(dst)             => format!("loc{suffix}\t %{dst}"),
+
+            /* ARITHMETIC */
+            IKind::Add(dst, src1, src2)   => format!("add{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Sub(dst, src1, src2)   => format!("sub{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Mul(dst, src1, src2)   => format!("mul{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Sdiv(dst, src1, src2)  => format!("sdiv{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Udiv(dst, src1, src2)  => format!("udiv{suffix}\t %{dst}, %{src1}, %{src2}"),
+
+            /* ORDERING */
+            IKind::Sgt(dst, src1, src2)   => format!("sgt{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Sge(dst, src1, src2)   => format!("sge{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Ugt(dst, src1, src2)   => format!("ugt{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Uge(dst, src1, src2)   => format!("uge{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Slt(dst, src1, src2)   => format!("slt{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Sle(dst, src1, src2)   => format!("sle{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Ult(dst, src1, src2)   => format!("ult{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Ule(dst, src1, src2)   => format!("ule{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Eq(dst, src1, src2)    => format!("eq{suffix}\t %{dst}, %{src1}, %{src2}"),
+            IKind::Ne(dst, src1, src2)    => format!("ne{suffix}\t %{dst}, %{src1}, %{src2}"),
+
+            /* LOGIC */
+            IKind::And(dst, src1, src2)   => format!("and\t %{dst}, %{src1}, %{src2}"),
+            IKind::Or(dst, src1, src2)    => format!("or\t %{dst}, %{src1}, %{src2}"),
+            IKind::Xor(dst, src1, src2)   => format!("xor\t %{dst}, %{src1}, %{src2}"),
+
+            /* CONTROL FLOW */
+            IKind::Label(label)           => format!("{label}:"),
+            IKind::Beq(src1, src2, label) => format!("beq{suffix}\t %{src1}, %{src2}, {label}"),
+            IKind::Bne(src1, src2, label) => format!("bne{suffix}\t %{src1}, %{src2}, {label}"),
+            IKind::Br(label)              => format!("br\t {label}"),
         };
         f.write_str(&s)
     }
@@ -137,16 +147,11 @@ impl<'src> Emitter<'src> {
         }
     }
 
-    fn emit_raw(&mut self, next_program: &str) {
-        if !next_program.is_empty() {
-            self.program.push(format!("\t{next_program}\n"));
-        }
-    }
-
-    fn emit_label(&mut self, label: &str) {
-        if !label.is_empty() {
-            self.program.push(format!("{label}:\n"));
-        }
+    fn emit_inst(&mut self, kind: IKind, width: u8) {
+        self.program.push(Ir {
+            kind,
+            width,
+        });
     }
 
     fn next_label(&mut self, stmt: &Stmt<'src, Resolved>) -> String {
@@ -168,7 +173,7 @@ impl<'src> Emitter<'src> {
         self.vr_count
     }
 
-    pub fn emit_program(mut self, objs: &[Object<'src, Resolved>]) -> Vec<String> {
+    pub fn emit_program(mut self, objs: &[Object<'src, Resolved>]) -> Vec<Ir> {
         for obj in objs {
             self.emit_object(obj);
         }
@@ -181,24 +186,27 @@ impl<'src> Emitter<'src> {
                 name,
                 returns,
                 args,
+                locals: _,
                 body,
             } => {
                 // START FUNCTION
                 let label = format!("Fn_{name}");
-                self.emit_label(&label);
+                self.emit_inst(IKind::Label(label), 0);
                 self.symbols.clear();
                 self.vr_count = 0;
                 for (i, arg) in args.iter().enumerate() {
                     let target = self.next_vr();
-                    self.emit_raw(&format!("%{target} = arg({i})"));
+                    self.emit_inst(IKind::GetParam(target, i), arg.ty.width());
                     self.symbols.insert(arg.name, target);
                 }
+
                 self.emit_stmt(body);
+
                 // END FUNCTION
-                if *returns == Resolved::Void && !self.program.last().unwrap().contains("\tret\n") {
-                    self.emit_raw("ret");
+                if *returns == Resolved::Void && !matches!(self.program.last().unwrap().kind, IKind::Ret(_)) {
+                    self.emit_inst(IKind::Ret(None), 0);
                 }
-                self.emit_label(&format!("FnEnd_{name}"));
+                self.emit_inst(IKind::Label(format!("FnEnd_{name}")), 0);
             }
             OKind::Global { .. } => todo!(),
             OKind::Struct { .. } => todo!(),
@@ -212,61 +220,60 @@ impl<'src> Emitter<'src> {
                 if self.symbols.insert(lhs.name, target).is_some() {
                     panic!("Duplicate symbol {:?}", lhs);
                 }
-                self.emit_raw(&format!(
-                    "%{target} = local({}, \"{}\")",
-                    lhs.ty.width(),
-                    lhs.name
-                ));
+                let target = self.next_vr();
+                self.emit_inst(IKind::Local(target), lhs.ty.width());
                 let rhs_vr = self.emit_expr(rhs);
-                let program = format!("%{target} = %{}", rhs_vr);
-                self.emit_raw(&program);
+                self.emit_inst(IKind::Move(target, rhs_vr), 0);
             }
             SKind::While { cond, body } => {
                 let label = self.next_label(stmt);
                 let start_label = label.clone() + "_loop";
                 let end_label = label + "_end";
-                let cond = self.emit_expr(cond);
+                let cond_vr = self.emit_expr(cond);
                 let target = self.next_vr();
-                self.emit_raw(&format!("%{target} = int({}, 0)", Resolved::Bool.width()));
-                self.emit_raw(&format!("bne %{target}, %{cond}, {end_label}"));
-                self.emit_label(&start_label);
+                self.emit_inst(IKind::Imm(target, 0x0), Resolved::Bool.width());
+                self.emit_inst(IKind::Bne(target, cond_vr, end_label.clone()), cond.ty.width());
+                self.emit_inst(IKind::Label(start_label.clone()), 0);
                 self.emit_stmt(body);
-                self.emit_raw(&format!("br {start_label}"));
-                self.emit_label(&end_label);
+                self.emit_inst(IKind::Br(start_label), 0);
+                self.emit_inst(IKind::Label(end_label), 0);
             }
             // Find the current loop label
             SKind::Continue => {
                 // Jump to start label
-                self.emit_raw(&format!("br L{}_loop", self.if_label));
+                self.emit_inst(IKind::Br(format!("L{}_loop", self.if_label)), 0);
             }
             SKind::Break => {
                 // Jump to end label
-                self.emit_raw(&format!("br L{}_endloop", self.if_label));
+                self.emit_inst(IKind::Br(format!("L{}_endloop", self.if_label)), 0);
             }
             SKind::If { cond, then_, else_ } => {
-                let cond = self.emit_expr(cond);
                 let label = self.next_label(stmt);
+                let then_label = label.clone() + "_then";
                 let else_label = label.clone() + "_else";
                 let end_label = label + "_end";
+                let cond_vr = self.emit_expr(cond);
                 let target = self.next_vr();
-                self.emit_raw(&format!("%{target} = int({}, 0)", Resolved::Bool.width()));
-                self.emit_raw(&format!("beq %{target}, %{cond}, {else_label}"));
+                self.emit_inst(IKind::Imm(target, 0x0), Resolved::Bool.width());
+                self.emit_inst(IKind::Beq(target, cond_vr, end_label.clone()), cond.ty.width());
+                self.emit_inst(IKind::Label(then_label), 0);
                 self.emit_stmt(then_);
                 if let SKind::Block(v) = &else_.as_ref().kind
                     && !v.is_empty()
                 {
-                    self.emit_raw(&format!("br {end_label}"));
-                    self.emit_label(&else_label);
+                    self.emit_inst(IKind::Br(end_label.clone()), 0);
+                    self.emit_inst(IKind::Label(else_label), 0);
                     self.emit_stmt(else_);
+                    self.emit_inst(IKind::Br(end_label.clone()), 0);
                 }
-                self.emit_label(&end_label);
+                self.emit_inst(IKind::Label(end_label), 0);
             }
             SKind::Return(expr) => {
                 if expr.ty != Resolved::Void {
                     let ret = self.emit_expr(expr);
-                    self.emit_raw(&format!("ret %{ret}"));
+                    self.emit_inst(IKind::Ret(Some(ret)), expr.ty.width());
                 } else {
-                    self.emit_raw(&format!("ret"));
+                    self.emit_inst(IKind::Ret(None), 0);
                 }
             }
             SKind::Block(stmts) => {
@@ -280,68 +287,66 @@ impl<'src> Emitter<'src> {
 
     fn emit_expr(&mut self, Expr { kind, ty, .. }: &Expr<'src, Resolved>) -> VReg {
         let target;
-        let template = match kind {
+        match kind {
             EKind::Symbol(symbol) => {
                 target = *self.symbols.get(symbol.name).unwrap();
-                format!("")
             }
             EKind::Int(x) => {
                 target = self.next_vr();
-                format!("%{target} = int({}, {x})", ty.width())
+                self.emit_inst(IKind::Imm(target, *x as i64), ty.width());
             }
             EKind::Bool(x) => {
                 target = self.next_vr();
-                format!("%{target} = int(u32, {})", *x as u8)
+                self.emit_inst(IKind::Imm(target, *x as i64), ty.width());
             }
             EKind::Nothing => {
                 target = self.vr_count;
-                format!("")
             }
             EKind::Str(_) => todo!(),
             EKind::Call { callee, args } => {
                 target = self.next_vr();
-                let mut nodes: Vec<_> = args.iter().map(|arg| self.emit_expr(arg)).collect();
+                let nodes: Vec<_> = args.iter().map(|arg| self.emit_expr(arg)).collect();
                 let call_instr = match &callee.kind {
                     EKind::Symbol(symbol) => {
-                        format!("%{target} = call Fn_{}, {}", symbol.name, args.len())
+                        IKind::Call(target, format!("Fn_{}", symbol.name), args.len())
                     }
                     _ => {
                         let callee = self.emit_expr(callee);
-                        let program = format!("%{target} = icall %{}, {}", callee, args.len());
-                        nodes.push(callee);
+                        let program = IKind::Icall(target, callee, args.len());
                         program
                     }
                 };
-                let program = nodes
-                    .iter()
-                    .map(|param| format!("param %{}\n\t", param))
-                    .collect::<Vec<_>>()
-                    .join("")
-                    + &call_instr;
-                program
+                for (i, arg_vr) in nodes.iter().enumerate() {
+                    self.emit_inst(IKind::SetParam(*arg_vr, i),  args[i].ty.width());
+                }
+                self.emit_inst(call_instr, 0);
             }
             EKind::Unary { op, rhs } => match op {
                 UnOp::Negate => {
                     let rhs_vr = self.emit_expr(rhs);
+                    let imm = self.next_vr();
+                    self.emit_inst(IKind::Imm(imm, 0x1), rhs.ty.width());
                     target = self.next_vr();
-                    format!("%{target} = neg %{rhs_vr}")
+                    self.emit_inst(IKind::Mul(target, rhs_vr, imm), rhs.ty.width());
                 }
                 UnOp::Not => {
                     let rhs_vr = self.emit_expr(rhs);
+                    let imm = self.next_vr();
+                    self.emit_inst(IKind::Imm(imm, 0x1), rhs.ty.width());
                     target = self.next_vr();
-                    format!("%{target} = xor %{rhs_vr}, 1")
+                    self.emit_inst(IKind::Xor(target, rhs_vr, imm), rhs.ty.width());
                 }
                 UnOp::Deref => {
                     let rhs_vr = self.emit_expr(rhs);
                     target = self.next_vr();
-                    format!("%{target} = load %{rhs_vr}")
+                    self.emit_inst(IKind::Load(target, rhs_vr), rhs.ty.width());
                 }
                 UnOp::AddrOf => {
                     target = self.next_vr();
                     match &rhs.kind {
-                        EKind::Symbol(symbol) => format!("%{target} = lea(\"{}\")", symbol.name),
+                        EKind::Symbol(symbol) => self.emit_inst(IKind::Addr(target, *self.symbols.get(symbol.name).unwrap()), 0),
                         x => panic!("Haven't done {x:?}"),
-                    }
+                    };
                 }
             },
             EKind::Bin { op, lhs, rhs } => match op {
@@ -352,42 +357,61 @@ impl<'src> Emitter<'src> {
                     } => {
                         target = self.emit_expr(lrhs); // This will be derived from AddrOf
                         let rhs_vr = self.emit_expr(rhs);
-                        format!("store %{target}, %{rhs_vr}")
+                        self.emit_inst(IKind::Store(target, rhs_vr), rhs.ty.width());
                     }
                     _ => {
                         target = self.emit_expr(lhs);
                         let rhs_vr = self.emit_expr(rhs);
-                        format!("%{target} = %{rhs_vr}")
+                        self.emit_inst(IKind::Move(target, rhs_vr), 0);
                     }
                 },
                 op => {
                     let lhs_vr = self.emit_expr(lhs);
                     let rhs_vr = self.emit_expr(rhs);
+                    target = self.next_vr();
                     #[rustfmt::skip]
-                    let op_str = match op {
-                        BinOp::LogOr  => "or",
-                        BinOp::LogAnd => "and",
-                        BinOp::Add    => "add",
-                        BinOp::Sub    => "sub",
-                        BinOp::Mul    => "mul",
-                        BinOp::Eq     => "eq",
-                        BinOp::Ne     => "ne",
+                    let instruction = match op {
+                        BinOp::LogOr  => IKind::Or(target, lhs_vr, rhs_vr),
+                        BinOp::LogAnd => IKind::And(target, lhs_vr, rhs_vr),
+                        BinOp::Add    => IKind::Add(target, lhs_vr, rhs_vr),
+                        BinOp::Sub    => IKind::Sub(target, lhs_vr, rhs_vr),
+                        BinOp::Mul    => IKind::Mul(target, lhs_vr, rhs_vr),
+                        BinOp::Eq     => IKind::Eq(target, lhs_vr, rhs_vr),
+                        BinOp::Ne     => IKind::Ne(target, lhs_vr, rhs_vr),
                         // The following instructions have unsigned counterparts
-                        BinOp::Div => if lhs.ty.signed() { "sdiv" } else { "udiv" }
-                        BinOp::Gt  => if lhs.ty.signed() { "sgt"  } else { "ugt"  }
-                        BinOp::Ge  => if lhs.ty.signed() { "sge"  } else { "uge"  }
-                        BinOp::Lt  => if lhs.ty.signed() { "slt"  } else { "ult"  }
-                        BinOp::Le  => if lhs.ty.signed() { "sle"  } else { "ule"  }
+                        BinOp::Div => if lhs.ty.signed() {
+                            IKind::Sdiv(target, lhs_vr, rhs_vr)
+                        } else { 
+                            IKind::Udiv(target, lhs_vr, rhs_vr)
+                        }
+                        BinOp::Gt => if lhs.ty.signed() {
+                            IKind::Sgt(target, lhs_vr, rhs_vr)
+                        } else { 
+                            IKind::Ugt(target, lhs_vr, rhs_vr)
+                        }
+                        BinOp::Ge => if lhs.ty.signed() {
+                            IKind::Sge(target, lhs_vr, rhs_vr)
+                        } else { 
+                            IKind::Uge(target, lhs_vr, rhs_vr)
+                        }
+                        BinOp::Lt => if lhs.ty.signed() {
+                            IKind::Slt(target, lhs_vr, rhs_vr)
+                        } else { 
+                            IKind::Ult(target, lhs_vr, rhs_vr)
+                        }
+                        BinOp::Le => if lhs.ty.signed() {
+                            IKind::Sle(target, lhs_vr, rhs_vr)
+                        } else { 
+                            IKind::Ule(target, lhs_vr, rhs_vr)
+                        }
                         _ => unreachable!(),
                     };
-                    target = self.next_vr();
-                    format!("%{target} = {op_str} %{}, %{}", lhs_vr, rhs_vr)
+                    self.emit_inst(instruction, rhs.ty.width());
                 }
             },
             EKind::FieldAccess { .. } => todo!(),
             EKind::Index { .. } => todo!(),
-        };
-        self.emit_raw(&template);
+        }
         target
     }
 }

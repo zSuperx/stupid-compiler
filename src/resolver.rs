@@ -58,6 +58,7 @@ impl<'src> Resolver<'src> {
                 name,
                 args,
                 returns,
+                locals: _,
                 body,
             } => {
                 let Some(resolved_return) = self.resolve_type(returns) else {
@@ -71,6 +72,7 @@ impl<'src> Resolver<'src> {
                         ty: self
                             .resolve_type(&arg.ty)
                             .expect(&format!("Unknown type {}", arg.ty)),
+                        addressed: arg.addressed,
                     };
                     if scope.contains_key(arg.name) {
                         panic!("Argument {} already defined", arg.name);
@@ -86,6 +88,7 @@ impl<'src> Resolver<'src> {
                         args: resolved_args.iter().map(|arg| arg.ty.clone()).collect(),
                         returns: Box::new(resolved_return.clone()),
                     },
+                    addressed: true,
                 };
 
                 if self.scope_stack[0].insert(name, fn_sym).is_some() {
@@ -102,11 +105,13 @@ impl<'src> Resolver<'src> {
                     );
                 }
                 self.scope_stack.pop();
+                let locals = HashMap::new();
                 self.return_stack.pop();
                 OKind::Fn {
                     name,
                     returns: resolved_return,
                     args: resolved_args,
+                    locals,
                     body: resolved_body,
                 }
             }
@@ -263,11 +268,13 @@ impl<'src> Resolver<'src> {
                     }
                 }
                 UnOp::AddrOf => {
-                    let rhs = self.resolve_expr(rhs, hint);
-                    if is_literal(&rhs) {
+                    let mut rhs = self.resolve_expr(rhs, hint);
+                    if let EKind::Symbol(sym) = &mut rhs.kind {
+                        sym.addressed = true;
+                    } else {
                         panic!(
-                            "Cannot take the address of a literal type {} {}",
-                            rhs.ty, rhs.span
+                            "Cannot take the address of an invalid LVALUE {}",
+                            rhs.span
                         );
                     }
                     Expr {
@@ -436,6 +443,7 @@ impl<'src> Resolver<'src> {
                 let sym = Symbol {
                     name: lhs.name,
                     ty: rhs.ty.clone(),
+                    addressed: false,
                 };
                 self.scope_stack
                     .last_mut()

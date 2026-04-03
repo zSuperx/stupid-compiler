@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::types::*;
 
 pub struct Parser<'src> {
@@ -114,7 +116,11 @@ impl<'src> Parser<'src> {
         let rhs = self.parse_expr();
         Object {
             kind: OKind::Global {
-                lhs: Symbol { name, ty },
+                lhs: Symbol {
+                    name,
+                    ty,
+                    addressed: true,
+                },
                 rhs,
             },
             span: span_start.merge(self.last_span),
@@ -132,7 +138,11 @@ impl<'src> Parser<'src> {
             let name = self.expect_ident();
             self.expect(TKind::Colon);
             let ty = self.parse_type();
-            let var = Symbol { name, ty };
+            let var = Symbol {
+                name,
+                ty,
+                addressed: true,
+            };
             args.push(var);
         }
 
@@ -148,7 +158,11 @@ impl<'src> Parser<'src> {
             let name = self.expect_ident();
             self.expect(TKind::Colon);
             let ty = self.parse_type();
-            let var = Symbol { name, ty };
+            let var = Symbol {
+                name,
+                ty,
+                addressed: false,
+            };
             args.push(var);
         }
 
@@ -166,6 +180,7 @@ impl<'src> Parser<'src> {
                 name,
                 body,
                 args,
+                locals: HashMap::new(),
                 returns,
             },
             span: span_start.merge(self.last_span),
@@ -193,6 +208,7 @@ impl<'src> Parser<'src> {
             TKind::Ident(s) => EKind::Symbol(Symbol {
                 name: s,
                 ty: Raw::Infer,
+                addressed: false,
             }),
             TKind::Bool(x) => EKind::Bool(x),
             TKind::Int(x) => EKind::Int(x),
@@ -356,7 +372,7 @@ impl<'src> Parser<'src> {
                     self.expect(TKind::Colon);
                     ty = self.parse_type();
                 }
-                let lhs = Symbol { name, ty };
+                let lhs = Symbol { name, ty, addressed: false };
                 self.expect(TKind::Eq);
                 let rhs = self.parse_expr();
                 self.expect(TKind::Semi);
