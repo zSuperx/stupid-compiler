@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::types::*;
 
 pub struct Parser<'src> {
@@ -24,17 +22,17 @@ impl<'src> Parser<'src> {
 
     fn commit_expr(
         &mut self,
-        kind: EKind<'src, Raw<'src>>,
+        kind: EKind<'src, Type<'src>>,
         span: Span<'src>,
-    ) -> Expr<'src, Raw<'src>> {
-        Expr::new(kind, Raw::Infer, span.merge(self.last_span))
+    ) -> Expr<'src, Type<'src>> {
+        Expr::new(kind, Type::Infer, span.merge(self.last_span))
     }
 
     fn commit_stmt(
         &mut self,
-        kind: SKind<'src, Raw<'src>>,
+        kind: SKind<'src, Type<'src>>,
         span: Span<'src>,
-    ) -> Stmt<'src, Raw<'src>> {
+    ) -> Stmt<'src, Type<'src>> {
         Stmt::new(kind, span.merge(self.last_span))
     }
 
@@ -88,7 +86,7 @@ impl<'src> Parser<'src> {
         }
     }
 
-    pub fn parse_program(&mut self) -> Vec<Object<'src, Raw<'src>>> {
+    pub fn parse_program(&mut self) -> Vec<Object<'src, Type<'src>>> {
         let mut objs = vec![];
         while !self.is_next(TKind::Eof) {
             let tok = self.peek();
@@ -102,11 +100,11 @@ impl<'src> Parser<'src> {
         objs
     }
 
-    fn parse_struct(&mut self) -> Object<'src, Raw<'src>> {
+    fn parse_struct(&mut self) -> Object<'src, Type<'src>> {
         todo!()
     }
 
-    fn parse_global(&mut self) -> Object<'src, Raw<'src>> {
+    fn parse_global(&mut self) -> Object<'src, Type<'src>> {
         let span_start = self.mark();
         self.expect(TKind::Global);
         let name = self.expect_ident();
@@ -127,7 +125,7 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn parse_fn(&mut self) -> Object<'src, Raw<'src>> {
+    fn parse_fn(&mut self) -> Object<'src, Type<'src>> {
         let span_start = self.mark();
         self.expect(TKind::Fn);
         let name = self.expect_ident();
@@ -170,7 +168,7 @@ impl<'src> Parser<'src> {
             self.expect(TKind::Arrow);
             self.parse_type()
         } else {
-            Raw::Base("void")
+            Type::Unresolved("void")
         };
 
         let body = self.parse_block();
@@ -180,34 +178,33 @@ impl<'src> Parser<'src> {
                 name,
                 body,
                 args,
-                locals: HashMap::new(),
                 returns,
             },
             span: span_start.merge(self.last_span),
         }
     }
 
-    fn parse_type(&mut self) -> Raw<'src> {
+    fn parse_type(&mut self) -> Type<'src> {
         let tok = self.peek();
         let ty = match tok.kind {
             TKind::Star => {
                 self.consume();
-                return Raw::Pointer(Box::new(self.parse_type()));
+                return Type::Pointer(Box::new(self.parse_type()));
             }
-            TKind::Ident(name) => Raw::Base(name),
+            TKind::Ident(name) => Type::Unresolved(name),
             x => panic!("Expected type, found {x} {}", tok.span),
         };
         self.consume();
         ty
     }
 
-    fn parse_prefix(&mut self) -> Expr<'src, Raw<'src>> {
+    fn parse_prefix(&mut self) -> Expr<'src, Type<'src>> {
         let span_start = self.mark();
         let tok = self.consume();
         let kind = match tok.kind {
             TKind::Ident(s) => EKind::Symbol(Symbol {
                 name: s,
-                ty: Raw::Infer,
+                ty: Type::Infer,
                 addressed: false,
             }),
             TKind::Bool(x) => EKind::Bool(x),
@@ -223,6 +220,20 @@ impl<'src> Parser<'src> {
                 },
                 rhs: Box::new(self._parse_expr(prefix_power(op).expect("Invalid operator"))),
             },
+            TKind::At => {
+                let target = if self.is_next(TKind::LParen) {
+                    self.expect(TKind::LParen);
+                    let inner = self.parse_type();
+                    self.expect(TKind::RParen);
+                    inner
+                } else {
+                    self.parse_type()
+                };
+                EKind::Cast {
+                    to: target,
+                    rhs: Box::new(self.parse_expr()),
+                }
+            }
             TKind::LParen => {
                 let inner = self.parse_expr();
                 self.expect(TKind::RParen);
@@ -235,10 +246,10 @@ impl<'src> Parser<'src> {
 
     fn parse_infix(
         &mut self,
-        lhs: Expr<'src, Raw<'src>>,
+        lhs: Expr<'src, Type<'src>>,
         op: TKind<'src>,
         op_power: f32,
-    ) -> Expr<'src, Raw<'src>> {
+    ) -> Expr<'src, Type<'src>> {
         let span_start = lhs.span;
         let kind = match op {
             TKind::LParen => {
@@ -318,7 +329,7 @@ impl<'src> Parser<'src> {
     }
 
     // Pratt parsing!
-    fn _parse_expr(&mut self, min_power: f32) -> Expr<'src, Raw<'src>> {
+    fn _parse_expr(&mut self, min_power: f32) -> Expr<'src, Type<'src>> {
         let mut lhs = self.parse_prefix();
 
         loop {
@@ -340,11 +351,11 @@ impl<'src> Parser<'src> {
         lhs
     }
 
-    pub fn parse_expr(&mut self) -> Expr<'src, Raw<'src>> {
+    pub fn parse_expr(&mut self) -> Expr<'src, Type<'src>> {
         self._parse_expr(0.0)
     }
 
-    fn parse_block(&mut self) -> Stmt<'src, Raw<'src>> {
+    fn parse_block(&mut self) -> Stmt<'src, Type<'src>> {
         let span_start = self.mark();
         self.expect(TKind::LCurly);
         let mut stmts = vec![];
@@ -360,19 +371,23 @@ impl<'src> Parser<'src> {
         self.commit_stmt(SKind::Block(stmts), span_start)
     }
 
-    fn parse_stmt(&mut self) -> Stmt<'src, Raw<'src>> {
+    fn parse_stmt(&mut self) -> Stmt<'src, Type<'src>> {
         let span_start = self.mark();
         let tok = self.peek();
         let kind = match tok.kind {
             TKind::Let => {
-                let mut ty = Raw::Infer;
+                let mut ty = Type::Infer;
                 self.expect(TKind::Let);
                 let name = self.expect_ident();
                 if self.is_next(TKind::Colon) {
                     self.expect(TKind::Colon);
                     ty = self.parse_type();
                 }
-                let lhs = Symbol { name, ty, addressed: false };
+                let lhs = Symbol {
+                    name,
+                    ty,
+                    addressed: false,
+                };
                 self.expect(TKind::Eq);
                 let rhs = self.parse_expr();
                 self.expect(TKind::Semi);

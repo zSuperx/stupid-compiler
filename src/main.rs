@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crate::{emitter::Emitter, lexer::Lexer, parser::Parser, resolver::Resolver};
 
 mod emitter;
@@ -21,7 +22,8 @@ fn main() {
     // println!("{lexed:#?}");
     let parsed = Parser::new(&lexed).parse_program();
     // println!("{parsed:#?}");
-    let resolved = Resolver::new().resolve_program(&parsed);
+    let mut binding = Resolver::new();
+    let resolved = binding.resolve_program(&parsed);
     // println!("{resolved:#?}");
     let emitted = Emitter::new().emit_program(&resolved);
     for instruction in emitted {

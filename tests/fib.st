@@ -6,7 +6,6 @@ fn fib(n: u32) -> u32 {
   }
 }
 
-fn main() {
-  let n: u32 = 5;
-  let x = fib(fib(n));
+fn main(argc: u8, argv: **u8) {
+  fib(@(u32)**argv);
 }

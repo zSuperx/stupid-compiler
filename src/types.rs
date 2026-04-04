@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Token<'src> {
     pub kind: TKind<'src>,
@@ -72,6 +70,7 @@ pub enum TKind<'src> {
     Eq,      // =
     AndAnd,  // &&
     OrOr,    // ||
+    At,      // @
 
     // Relationals
     EqEq,   // ==
@@ -92,7 +91,6 @@ pub enum OKind<'src, T> {
         name: &'src str,
         returns: T,
         args: Vec<Symbol<'src, T>>,
-        locals: HashMap<&'src str, Symbol<'src, T>>,
         body: Stmt<'src, T>,
     },
     Global {
@@ -111,16 +109,10 @@ pub struct Object<'src, T> {
     pub span: Span<'src>,
 }
 
-#[derive(Debug, Clone)]
-pub enum Raw<'src> {
-    Infer,
-    Base(&'src str),
-    Pointer(Box<Raw<'src>>),
-}
-
 #[derive(Debug, Clone, PartialEq)]
-pub enum Resolved {
+pub enum Type<'src> {
     Infer,
+    Unresolved(&'src str),
 
     U8,
     U16,
@@ -134,10 +126,10 @@ pub enum Resolved {
     Void,
 
     Function {
-        args: Vec<Resolved>,
-        returns: Box<Resolved>,
+        args: Vec<Type<'src>>,
+        returns: Box<Type<'src>>,
     },
-    Pointer(Box<Resolved>),
+    Pointer(Box<Type<'src>>),
     // Struct(Vec<Field>),
     // Custom(&'src, Box<Resolved>)
 }
@@ -149,32 +141,22 @@ pub struct Symbol<'src, T> {
     pub addressed: bool,
 }
 
-impl<'src> std::fmt::Display for Raw<'src> {
+impl<'src> std::fmt::Display for Type<'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            Raw::Infer => "{unknown}".to_string(),
-            Raw::Base(s) => s.to_string(),
-            Raw::Pointer(raw_type) => format!("*{raw_type}"),
-        };
-        f.write_str(&s)
-    }
-}
-
-impl std::fmt::Display for Resolved {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            Resolved::Infer => "{unknown}".to_string(),
-            Resolved::U8 => "u8".to_string(),
-            Resolved::U16 => "u16".to_string(),
-            Resolved::U32 => "u32".to_string(),
-            Resolved::U64 => "u64".to_string(),
-            Resolved::I8 => "i8".to_string(),
-            Resolved::I16 => "i16".to_string(),
-            Resolved::I32 => "i32".to_string(),
-            Resolved::I64 => "i64".to_string(),
-            Resolved::Bool => "bool".to_string(),
-            Resolved::Void => "void".to_string(),
-            Resolved::Function { args, returns } => {
+            Type::Infer => "{unknown}".to_string(),
+            Type::Unresolved(s) => format!("unresolved({s})"),
+            Type::U8 => "u8".to_string(),
+            Type::U16 => "u16".to_string(),
+            Type::U32 => "u32".to_string(),
+            Type::U64 => "u64".to_string(),
+            Type::I8 => "i8".to_string(),
+            Type::I16 => "i16".to_string(),
+            Type::I32 => "i32".to_string(),
+            Type::I64 => "i64".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::Void => "void".to_string(),
+            Type::Function { args, returns } => {
                 let args = args
                     .iter()
                     .map(|arg| format!("{arg}"))
@@ -182,30 +164,30 @@ impl std::fmt::Display for Resolved {
                     .join(",");
                 format!("fn({args}) -> {returns}")
             }
-            Resolved::Pointer(resolved_type) => format!("*{resolved_type}"),
+            Type::Pointer(resolved_type) => format!("*{resolved_type}"),
         };
         f.write_str(&s)
     }
 }
 
-impl Resolved {
+impl<'src> Type<'src> {
     pub fn width(&self) -> u8 {
-        use Resolved::*;
+        use Type::*;
         match self {
             U8 | I8 => 8,
             U16 | I16 => 16,
             U32 | I32 | Bool => 32,
             U64 | I64 | Pointer(_) => 64,
-            rest @ (Infer | Void | Function { .. }) => panic!("{rest} does not have a width"),
+            rest => panic!("{rest} does not have a width"),
         }
     }
 
     pub fn signed(&self) -> bool {
-        use Resolved::*;
+        use Type::*;
         match self {
             U8 | U16 | U32 | U64 | Bool | Pointer(_) => false,
             I8 | I16 | I32 | I64 => true,
-            rest @ (Infer | Void | Function { .. }) => panic!("{rest} does not have a width"),
+            rest => panic!("{rest} does not have a sign"),
         }
     }
 }
@@ -337,6 +319,7 @@ impl<'src, T> std::fmt::Display for EKind<'src, T> {
             EKind::Call { .. } => "function call",
             EKind::Unary { .. } => "unary operation",
             EKind::Bin { .. } => "binary operation",
+            EKind::Cast { .. } => "type cast",
             EKind::FieldAccess { .. } => "field access",
             EKind::Index { .. } => "array index",
         };
@@ -368,6 +351,10 @@ pub enum EKind<'src, T> {
     Bin {
         op: BinOp,
         lhs: Box<Expr<'src, T>>,
+        rhs: Box<Expr<'src, T>>,
+    },
+    Cast {
+        to: T,
         rhs: Box<Expr<'src, T>>,
     },
     FieldAccess {

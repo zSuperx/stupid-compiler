@@ -207,6 +207,7 @@ impl<'src> Lexer<'src> {
             b"=" => Eq,      // =
             b"&&" => AndAnd,
             b"||" => OrOr,
+            b"@" => At,
             // Relationals
             b"==" => EqEq,
             b"!=" => BangEq,

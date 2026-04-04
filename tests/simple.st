@@ -1,11 +1,14 @@
-fn pro(x: i32) {
-  if (x == 50) {
-    return;
+fn better(n: *u64) {
+  if *n < 69 {
+    *n = 67;
+  } else if *n > 69 {
+    *n = 420;
   }
-  let y = &x;
 }
 
-fn b(z: u32) {
-  let x = 5;
-  let y = &x;
+fn main() -> u32 {
+  let my_number: u8 = 53;
+  better(@*u64 my_number);
+
+  return 0;
 }
