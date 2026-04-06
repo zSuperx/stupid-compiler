@@ -4,7 +4,7 @@ use crate::types::*;
 
 pub struct Resolver<'src> {
     types: HashMap<&'src str, Type<'src>>,
-    scope_stack: Vec<HashMap<&'src str, Symbol<'src, Type<'src>>>>,
+    scope_stack: Vec<HashMap<&'src str, Symbol<'src>>>,
     return_stack: Vec<Type<'src>>,
     loop_stack: usize,
 }
@@ -37,8 +37,8 @@ impl<'src> Resolver<'src> {
 
     pub fn resolve_program(
         &mut self,
-        objs: &[Object<'src, Type<'src>>],
-    ) -> Vec<Object<'src, Type<'src>>> {
+        objs: &[Object<'src>],
+    ) -> Vec<Object<'src>> {
         objs.iter().map(|o| self.resolve_object(o)).collect()
     }
 
@@ -53,7 +53,7 @@ impl<'src> Resolver<'src> {
         }
     }
 
-    pub fn resolve_object(&mut self, obj: &Object<'src, Type<'src>>) -> Object<'src, Type<'src>> {
+    pub fn resolve_object(&mut self, obj: &Object<'src>) -> Object<'src> {
         let kind = match &obj.kind {
             OKind::Fn {
                 name,
@@ -125,9 +125,9 @@ impl<'src> Resolver<'src> {
 
     pub fn resolve_expr(
         &mut self,
-        expr: &Expr<'src, Type<'src>>,
+        expr: &Expr<'src>,
         hint: &Type<'src>,
-    ) -> Expr<'src, Type<'src>> {
+    ) -> Expr<'src> {
         match &expr.kind {
             EKind::Nothing => Expr {
                 ty: Type::Void,
@@ -428,7 +428,7 @@ impl<'src> Resolver<'src> {
         }
     }
 
-    fn resolve_stmt(&mut self, stmt: &Stmt<'src, Type<'src>>) -> (Stmt<'src, Type<'src>>, Terminates) {
+    fn resolve_stmt(&mut self, stmt: &Stmt<'src>) -> (Stmt<'src>, Terminates) {
         let span = stmt.span;
         let (kind, terminates) = match &stmt.kind {
             SKind::Let { lhs, rhs } => {
@@ -560,6 +560,6 @@ fn is_integral(ty: &Type) -> bool {
     matches!(ty, U8 | U16 | U32 | U64 | I8 | I16 | I32 | I64)
 }
 
-fn is_literal<T>(expr: &Expr<T>) -> bool {
+fn is_literal(expr: &Expr) -> bool {
     matches!(expr.kind, EKind::Int(_) | EKind::Str(_) | EKind::Bool(_))
 }

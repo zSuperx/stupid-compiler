@@ -164,7 +164,7 @@ impl<'src> Emitter<'src> {
         });
     }
 
-    fn next_label(&mut self, stmt: &Stmt<'src, Type>) -> String {
+    fn next_label(&mut self, stmt: &Stmt<'src>) -> String {
         match &stmt.kind {
             SKind::While { .. } => {
                 self.loop_label += 1;
@@ -183,14 +183,14 @@ impl<'src> Emitter<'src> {
         self.vr_count
     }
 
-    pub fn emit_program(mut self, objs: &[Object<'src, Type>]) -> Vec<Ir> {
+    pub fn emit_program(mut self, objs: &[Object<'src>]) -> Vec<Ir> {
         for obj in objs {
             self.emit_object(obj);
         }
         self.program
     }
 
-    fn emit_object(&mut self, obj: &Object<'src, Type>) {
+    fn emit_object(&mut self, obj: &Object<'src>) {
         match &obj.kind {
             OKind::Fn {
                 name,
@@ -221,7 +221,7 @@ impl<'src> Emitter<'src> {
         }
     }
 
-    fn emit_stmt(&mut self, stmt: &Stmt<'src, Type>) {
+    fn emit_stmt(&mut self, stmt: &Stmt<'src>) {
         match &stmt.kind {
             SKind::Let { lhs, rhs } => {
                 let target = self.next_vr();
@@ -293,7 +293,7 @@ impl<'src> Emitter<'src> {
         }
     }
 
-    fn emit_expr(&mut self, Expr { kind, ty, .. }: &Expr<'src, Type>) -> VReg {
+    fn emit_expr(&mut self, Expr { kind, ty, .. }: &Expr<'src>) -> VReg {
         let target;
         match kind {
             EKind::Symbol(symbol) => {

@@ -8,7 +8,9 @@ fn better(n: *u64) {
 
 fn main() -> u32 {
   let my_number: u8 = 53;
-  better(@*u64 my_number);
+
+  let n = @u64 my_number;
+  better(&n);
 
   return 0;
 }

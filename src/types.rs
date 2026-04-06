@@ -86,26 +86,26 @@ pub enum TKind<'src> {
 /// - type definitions
 /// - global variables
 #[derive(Debug, Clone)]
-pub enum OKind<'src, T> {
+pub enum OKind<'src> {
     Fn {
         name: &'src str,
-        returns: T,
-        args: Vec<Symbol<'src, T>>,
-        body: Stmt<'src, T>,
+        returns: Type<'src>,
+        args: Vec<Symbol<'src>>,
+        body: Stmt<'src>,
     },
     Global {
-        lhs: Symbol<'src, T>,
-        rhs: Expr<'src, T>,
+        lhs: Symbol<'src>,
+        rhs: Expr<'src>,
     },
     Struct {
         name: &'src str,
-        fields: Vec<Symbol<'src, T>>,
+        fields: Vec<Symbol<'src>>,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct Object<'src, T> {
-    pub kind: OKind<'src, T>,
+pub struct Object<'src> {
+    pub kind: OKind<'src>,
     pub span: Span<'src>,
 }
 
@@ -134,10 +134,10 @@ pub enum Type<'src> {
     // Custom(&'src, Box<Resolved>)
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Symbol<'src, T> {
+#[derive(Debug, Clone)]
+pub struct Symbol<'src> {
     pub name: &'src str,
-    pub ty: T,
+    pub ty: Type<'src>,
     pub addressed: bool,
 }
 
@@ -193,37 +193,37 @@ impl<'src> Type<'src> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Stmt<'src, T> {
-    pub kind: SKind<'src, T>,
+pub struct Stmt<'src> {
+    pub kind: SKind<'src>,
     pub span: Span<'src>,
 }
 
-impl<'src, T> Stmt<'src, T> {
-    pub fn new(kind: SKind<'src, T>, span: Span<'src>) -> Self {
+impl<'src> Stmt<'src> {
+    pub fn new(kind: SKind<'src>, span: Span<'src>) -> Self {
         Self { kind, span }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum SKind<'src, T> {
+pub enum SKind<'src> {
     Let {
-        lhs: Symbol<'src, T>,
-        rhs: Expr<'src, T>,
+        lhs: Symbol<'src>,
+        rhs: Expr<'src>,
     },
     While {
-        cond: Expr<'src, T>,
-        body: Box<Stmt<'src, T>>,
+        cond: Expr<'src>,
+        body: Box<Stmt<'src>>,
     },
     Continue,
     Break,
     If {
-        cond: Expr<'src, T>,
-        then_: Box<Stmt<'src, T>>,
-        else_: Box<Stmt<'src, T>>,
+        cond: Expr<'src>,
+        then_: Box<Stmt<'src>>,
+        else_: Box<Stmt<'src>>,
     },
-    Return(Expr<'src, T>),
-    Block(Vec<Stmt<'src, T>>),
-    Expr(Expr<'src, T>),
+    Return(Expr<'src>),
+    Block(Vec<Stmt<'src>>),
+    Expr(Expr<'src>),
 }
 
 #[derive(Clone, Copy, Default)]
@@ -302,13 +302,13 @@ impl<'src> Span<'src> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Expr<'src, T> {
-    pub kind: EKind<'src, T>,
-    pub ty: T,
+pub struct Expr<'src> {
+    pub kind: EKind<'src>,
+    pub ty: Type<'src>,
     pub span: Span<'src>,
 }
 
-impl<'src, T> std::fmt::Display for EKind<'src, T> {
+impl<'src> std::fmt::Display for EKind<'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             EKind::Symbol(_) => "variable",
@@ -327,43 +327,43 @@ impl<'src, T> std::fmt::Display for EKind<'src, T> {
     }
 }
 
-impl<'src, T> Expr<'src, T> {
-    pub fn new(kind: EKind<'src, T>, ty: T, span: Span<'src>) -> Self {
+impl<'src> Expr<'src> {
+    pub fn new(kind: EKind<'src>, ty: Type<'src>, span: Span<'src>) -> Self {
         Self { kind, ty, span }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum EKind<'src, T> {
-    Symbol(Symbol<'src, T>),
+pub enum EKind<'src> {
+    Symbol(Symbol<'src>),
     Int(u64),
     Bool(bool),
     Nothing,
     Str(&'src [u8]),
     Call {
-        callee: Box<Expr<'src, T>>,
-        args: Vec<Expr<'src, T>>,
+        callee: Box<Expr<'src>>,
+        args: Vec<Expr<'src>>,
     },
     Unary {
         op: UnOp,
-        rhs: Box<Expr<'src, T>>,
+        rhs: Box<Expr<'src>>,
     },
     Bin {
         op: BinOp,
-        lhs: Box<Expr<'src, T>>,
-        rhs: Box<Expr<'src, T>>,
+        lhs: Box<Expr<'src>>,
+        rhs: Box<Expr<'src>>,
     },
     Cast {
-        to: T,
-        rhs: Box<Expr<'src, T>>,
+        to: Type<'src>,
+        rhs: Box<Expr<'src>>,
     },
     FieldAccess {
-        lhs: Box<Expr<'src, T>>,
-        rhs: Box<Expr<'src, T>>,
+        lhs: Box<Expr<'src>>,
+        rhs: Box<Expr<'src>>,
     },
     Index {
-        lhs: Box<Expr<'src, T>>,
-        rhs: Box<Expr<'src, T>>,
+        lhs: Box<Expr<'src>>,
+        rhs: Box<Expr<'src>>,
     },
 }
 
